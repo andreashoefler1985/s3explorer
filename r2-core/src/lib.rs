@@ -17,9 +17,10 @@ pub mod transfer;
 // Re-export commonly used types
 pub use error::{Error, Result};
 pub use events::{PaneEvent, PaneId, ObjectInfo as EventObjectInfo, ProgressEvent};
-pub use s3_client::types::{BucketInfo, ObjectInfo, S3ClientConfig, Part, ObjectListResponse};
+pub use s3_client::types::{BucketInfo, ObjectInfo, S3ClientConfig, Part, ObjectListResponse, AclGrant, Grantee, ObjectVersion};
 pub use s3_client::client::{S3Client, AwsSdkS3Client};
+pub use s3_client::{parent_prefix, format_bytes};
 pub use credentials::storage::{CredentialStorage, LibsecretCredentialStorage, EncryptedFileBackend};
 pub use credentials::profile::Profile;
-pub use cache::manager::{CacheManager, SqliteCacheManager};
+pub use cache::manager::{CacheManager, SqliteCacheManager, CacheStats};
 pub use transfer::{TransferEngine, StubTransferEngine, TokioTransferEngine, TransferJob, TransferDirection, TransferStatus, TransferSource, TransferDestination, TransferProgress, TransferPart};

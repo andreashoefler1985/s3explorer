@@ -3,13 +3,14 @@
 //! Displays all versions of an S3 object with actions:
 //! restore, delete, download.
 
-use chrono::{DateTime, Utc};
 use gtk4::prelude::*;
 use gtk4::{
     Align, Box as GtkBox, Button, ColumnView, ColumnViewColumn, Dialog,
     Label, NoSelection, Orientation, ScrolledWindow, SignalListItemFactory,
     StringList, StringObject,
 };
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 use tracing::{error, info};
 
@@ -61,7 +62,7 @@ pub fn show_version_history(
 
     // Version list (ColumnView)
     let store = StringList::new(&[] as &[&str]);
-    let (column_view, scrolled) = create_version_list(&store);
+    let (_column_view, scrolled) = create_version_list(&store);
     content.append(&scrolled);
 
     // Action buttons
@@ -91,20 +92,23 @@ pub fn show_version_history(
     button_box.append(&close_btn);
     content.append(&button_box);
 
-    // State: selected version ID
-    let selected_version: std::cell::RefCell<Option<String>> = std::cell::RefCell::new(None);
+    // Shared state using Rc<RefCell<>>
+    let selected: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+    let versions_cell: Rc<RefCell<Vec<ObjectVersion>>> = Rc::new(RefCell::new(Vec::new()));
 
     // Load versions
     let client = s3_client.clone();
-    let bucket_clone = bucket_owned.clone();
-    let key_clone = key_owned.clone();
-    let store_clone = store.clone();
-    let loading_label_clone = loading_label.clone();
+    let bucket_l = bucket_owned.clone();
+    let key_l = key_owned.clone();
+    let store_l = store.clone();
+    let loading_l = loading_label.clone();
+    let versions_cell_l = versions_cell.clone();
+    let selected_l = selected.clone();
 
     glib::MainContext::default().spawn_local(async move {
-        match client.list_object_versions(&bucket_clone, &key_clone).await {
+        match client.list_object_versions(&bucket_l, &key_l).await {
             Ok(versions) => {
-                loading_label_clone.set_label(&format!("{} Versionen gefunden", versions.len()));
+                loading_l.set_label(&format!("{} Versionen gefunden", versions.len()));
                 let items: Vec<String> = versions.iter().map(|v| {
                     let date = v.last_modified.format("%Y-%m-%d %H:%M:%S UTC").to_string();
                     let size = bytes_to_human(v.size);
@@ -112,114 +116,113 @@ pub fn show_version_history(
                     format!("{} | {} | {}{}", v.version_id, date, size, latest)
                 }).collect();
                 let refs: Vec<&str> = items.iter().map(|s| s.as_str()).collect();
-                store_clone.splice(0, store_clone.n_items(), &refs);
+                store_l.splice(0, store_l.n_items(), &refs);
 
-                // Store versions for actions
-                let versions_clone = versions.clone();
-                let selected = selected_version.clone();
-                let store_for_select = store_clone.clone();
+                *versions_cell_l.borrow_mut() = versions;
+            }
+            Err(e) => {
+                loading_l.set_label(&format!("❌ Fehler: {}", e));
+            }
+        }
+    });
 
-                // Connect selection via button clicks (simplified: store versions in a cell)
-                let versions_cell: std::cell::RefCell<Vec<ObjectVersion>> =
-                    std::cell::RefCell::new(versions_clone);
-
-                // Restore
-                let client_r = client.clone();
-                let bucket_r = bucket_clone.clone();
-                let key_r = key_clone.clone();
-                let dialog_r = dialog.clone();
-                restore_btn.connect_clicked(move |_| {
-                    let sel = selected.borrow().clone();
-                    if let Some(ref vid) = sel {
-                        let versions = versions_cell.borrow();
-                        if let Some(v) = versions.iter().find(|v| v.version_id == *vid) {
-                            let client = client_r.clone();
-                            let bucket = bucket_r.clone();
-                            let key = key_r.clone();
-                            let vid = v.version_id.clone();
-                            let dialog = dialog_r.clone();
-                            glib::MainContext::default().spawn_local(async move {
-                                match client.restore_object_version(&bucket, &key, &vid).await {
-                                    Ok(()) => {
-                                        info!(key = %key, version = %vid, "Version restored");
-                                        // Refresh would go here
-                                    }
-                                    Err(e) => {
-                                        error!(key = %key, version = %vid, error = %e, "Restore failed");
-                                    }
-                                }
-                            });
+    // Restore button
+    let client_r = s3_client.clone();
+    let bucket_r = bucket_owned.clone();
+    let key_r = key_owned.clone();
+    let dialog_r = dialog.clone();
+    let selected_r = selected.clone();
+    let versions_r = versions_cell.clone();
+    restore_btn.connect_clicked(move |_| {
+        let sel = selected_r.borrow().clone();
+        if let Some(ref vid) = sel {
+            let versions = versions_r.borrow();
+            if let Some(v) = versions.iter().find(|v| v.version_id == *vid) {
+                let client = client_r.clone();
+                let bucket = bucket_r.clone();
+                let key = key_r.clone();
+                let vid = v.version_id.clone();
+                let dialog = dialog_r.clone();
+                glib::MainContext::default().spawn_local(async move {
+                    match client.restore_object_version(&bucket, &key, &vid).await {
+                        Ok(()) => {
+                            info!(key = %key, version = %vid, "Version restored");
+                            dialog.close();
                         }
-                    }
-                });
-
-                // Delete
-                let client_d = client.clone();
-                let bucket_d = bucket_clone.clone();
-                let key_d = key_clone.clone();
-                let dialog_d = dialog.clone();
-                delete_btn.connect_clicked(move |_| {
-                    let sel = selected.borrow().clone();
-                    if let Some(ref vid) = sel {
-                        let versions = versions_cell.borrow();
-                        if let Some(v) = versions.iter().find(|v| v.version_id == *vid) {
-                            let client = client_d.clone();
-                            let bucket = bucket_d.clone();
-                            let key = key_d.clone();
-                            let vid = v.version_id.clone();
-                            let dialog = dialog_d.clone();
-                            glib::MainContext::default().spawn_local(async move {
-                                match client.delete_object_version(&bucket, &key, &vid).await {
-                                    Ok(()) => {
-                                        info!(key = %key, version = %vid, "Version deleted");
-                                        dialog.close();
-                                    }
-                                    Err(e) => {
-                                        error!(key = %key, version = %vid, error = %e, "Delete failed");
-                                    }
-                                }
-                            });
-                        }
-                    }
-                });
-
-                // Download
-                let client_dl = client.clone();
-                let bucket_dl = bucket_clone.clone();
-                let key_dl = key_clone.clone();
-                download_btn.connect_clicked(move |_| {
-                    let sel = selected.borrow().clone();
-                    if let Some(ref vid) = sel {
-                        let versions = versions_cell.borrow();
-                        if let Some(v) = versions.iter().find(|v| v.version_id == *vid) {
-                            let client = client_dl.clone();
-                            let bucket = bucket_dl.clone();
-                            let key = key_dl.clone();
-                            let vid = v.version_id.clone();
-                            glib::MainContext::default().spawn_local(async move {
-                                match client.get_object_version(&bucket, &key, &vid).await {
-                                    Ok(data) => {
-                                        info!(key = %key, version = %vid, size = data.len(), "Version downloaded");
-                                    }
-                                    Err(e) => {
-                                        error!(key = %key, version = %vid, error = %e, "Download failed");
-                                    }
-                                }
-                            });
+                        Err(e) => {
+                            error!(key = %key, version = %vid, error = %e, "Restore failed");
                         }
                     }
                 });
             }
-            Err(e) => {
-                loading_label_clone.set_label(&format!("❌ Fehler: {}", e));
+        }
+    });
+
+    // Delete button
+    let client_d = s3_client.clone();
+    let bucket_d = bucket_owned.clone();
+    let key_d = key_owned.clone();
+    let dialog_d = dialog.clone();
+    let selected_d = selected.clone();
+    let versions_d = versions_cell.clone();
+    delete_btn.connect_clicked(move |_| {
+        let sel = selected_d.borrow().clone();
+        if let Some(ref vid) = sel {
+            let versions = versions_d.borrow();
+            if let Some(v) = versions.iter().find(|v| v.version_id == *vid) {
+                let client = client_d.clone();
+                let bucket = bucket_d.clone();
+                let key = key_d.clone();
+                let vid = v.version_id.clone();
+                let dialog = dialog_d.clone();
+                glib::MainContext::default().spawn_local(async move {
+                    match client.delete_object_version(&bucket, &key, &vid).await {
+                        Ok(()) => {
+                            info!(key = %key, version = %vid, "Version deleted");
+                            dialog.close();
+                        }
+                        Err(e) => {
+                            error!(key = %key, version = %vid, error = %e, "Delete failed");
+                        }
+                    }
+                });
+            }
+        }
+    });
+
+    // Download button
+    let client_dl = s3_client.clone();
+    let bucket_dl = bucket_owned.clone();
+    let key_dl = key_owned.clone();
+    let selected_dl = selected.clone();
+    let versions_dl = versions_cell.clone();
+    download_btn.connect_clicked(move |_| {
+        let sel = selected_dl.borrow().clone();
+        if let Some(ref vid) = sel {
+            let versions = versions_dl.borrow();
+            if let Some(v) = versions.iter().find(|v| v.version_id == *vid) {
+                let client = client_dl.clone();
+                let bucket = bucket_dl.clone();
+                let key = key_dl.clone();
+                let vid = v.version_id.clone();
+                glib::MainContext::default().spawn_local(async move {
+                    match client.get_object_version(&bucket, &key, &vid).await {
+                        Ok(data) => {
+                            info!(key = %key, version = %vid, size = data.len(), "Version downloaded");
+                        }
+                        Err(e) => {
+                            error!(key = %key, version = %vid, error = %e, "Download failed");
+                        }
+                    }
+                });
             }
         }
     });
 
     // Close button
-    let dialog_clone = dialog.clone();
+    let dialog_c = dialog.clone();
     close_btn.connect_clicked(move |_| {
-        dialog_clone.close();
+        dialog_c.close();
     });
 
     dialog.show();

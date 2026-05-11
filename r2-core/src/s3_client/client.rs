@@ -6,7 +6,7 @@ use aws_credential_types::Credentials;
 use aws_sdk_s3::config::{BehaviorVersion, Region};
 use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::types::{
-    BucketVersioningStatus, Grantee as AwsGrantee, Permission, Tag,
+    BucketVersioningStatus, Grantee as AwsGrantee, Permission,
 };
 use aws_sdk_s3::Client as AwsClient;
 use chrono::{DateTime, Utc};
@@ -604,7 +604,6 @@ impl S3Client for AwsSdkS3Client {
             .map_err(|e| S3Error::Aws(format!("Failed to read body: {}", e)))?;
         Ok(data.to_vec())
     }
-}
 
     // ── Versioning ──
 
@@ -617,9 +616,10 @@ impl S3Client for AwsSdkS3Client {
                 Ok(status)
             }
             Err(e) => {
+                let err_str = e.to_string();
                 let err = Self::map_sdk_error(&e.into());
                 // Some backends don't support versioning — return None instead of error
-                if matches!(err, S3Error::Aws(_)) && e.to_string().contains("NotImplemented") {
+                if matches!(err, S3Error::Aws(_)) && err_str.contains("NotImplemented") {
                     warn!(bucket = %bucket, "Versioning not implemented by this backend");
                     Ok(None)
                 } else {
@@ -695,7 +695,7 @@ impl S3Client for AwsSdkS3Client {
                 }
             }
 
-            if !output.is_truncated() {
+            if !output.is_truncated().unwrap_or(false) {
                 break;
             }
             key_marker = output.next_key_marker().map(|s| s.to_string());
@@ -894,8 +894,11 @@ fn grant_to_aws(grant: &AclGrant) -> aws_sdk_s3::types::Grant {
         grantee_builder = grantee_builder.uri(uri);
     }
 
+    let grantee = grantee_builder.build()
+        .expect("Failed to build Grantee");
+
     aws_sdk_s3::types::Grant::builder()
-        .grantee(grantee_builder.build())
+        .grantee(grantee)
         .permission(Permission::from(grant.permission.as_str()))
         .build()
 }

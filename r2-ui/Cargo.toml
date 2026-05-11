@@ -4,10 +4,23 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
+description.workspace = true
 
 [[bin]]
 name = "r2"
 path = "src/main.rs"
+
+[package.metadata.deb]
+maintainer = "r2 Team <dev@r2.app>"
+depends = "$auto, libgtk-4-1 (>= 4.12), libsecret-1-0 (>= 0.20)"
+section = "utils"
+priority = "optional"
+assets = [
+    ["target/release/r2", "usr/bin/", "755"],
+    ["resources/r2.desktop", "usr/share/applications/", "644"],
+    ["resources/r2.metainfo.xml", "usr/share/metainfo/", "644"],
+    ["resources/icons/hicolor/256x256/apps/r2.png", "usr/share/icons/hicolor/256x256/apps/", "644"],
+]
 
 [dependencies]
 # Core
