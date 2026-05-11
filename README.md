@@ -1,6 +1,6 @@
 <div align="center">
   <br/>
-  <h1>🪣 r2 — S3 Explorer</h1>
+  <h1>🪣 S3 Explorer</h1>
   <p><strong>Ein nativer GTK4-S3-Browser für Linux — geschrieben in Rust.</strong></p>
 
   <p>
