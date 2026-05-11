@@ -13,7 +13,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::{mpsc, Mutex, Semaphore, watch, Notify};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::info;
 use uuid::Uuid;
 
 use crate::error::{Result, TransferError};
@@ -530,7 +530,7 @@ impl TokioTransferEngine {
             let transferred = transferred.clone();
             let progress_tx = progress_tx.clone();
             let job_id = *job_id;
-            let cancel_token = cancel_token.clone();
+            let _cancel_token = cancel_token.clone();
 
             let handle = tokio::spawn(async move {
                 let _permit = part_semaphore.acquire().await;
@@ -884,8 +884,8 @@ impl TokioTransferEngineRef {
         let progress_tx = self.progress_tx.clone();
         let client_factory = self.client_factory.clone();
         let multipart_threshold = self.multipart_threshold;
-        let chunk_size = self.chunk_size;
-        let max_concurrent_parts = self.max_concurrent_parts;
+        let _chunk_size = self.chunk_size;
+        let _max_concurrent_parts = self.max_concurrent_parts;
         let jobs = self.jobs.clone();
 
         // Acquire concurrency permit

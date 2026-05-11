@@ -5,9 +5,9 @@
 
 use gtk4::prelude::*;
 use gtk4::{
-    Align, Box as GtkBox, Button, ColumnView, ColumnViewColumn, Dialog,
+    Align, Box as GtkBox, Button, ColumnView, ColumnViewColumn, HeaderBar,
     Label, NoSelection, Orientation, ScrolledWindow, SignalListItemFactory,
-    StringList, StringObject,
+    StringList, StringObject, Window,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -29,29 +29,30 @@ pub fn show_version_history(
     let bucket_owned = bucket.to_string();
     let key_owned = key.to_string();
 
-    let dialog = Dialog::builder()
-        .title(format!("Versionen: {}", key))
-        .transient_for(parent)
-        .modal(true)
-        .default_width(700)
-        .default_height(500)
-        .build();
+    let window = Window::new();
+    window.set_title(Some(&format!("Versionen: {}", key)));
+    window.set_transient_for(Some(parent));
+    window.set_modal(true);
+    window.set_default_size(700, 500);
 
-    let content = dialog.content_area();
-    content.set_orientation(Orientation::Vertical);
-    content.set_spacing(8);
+    let header = HeaderBar::new();
+    header.set_show_title_buttons(true);
+    window.set_titlebar(Some(&header));
+
+    let content = GtkBox::new(Orientation::Vertical, 8);
     content.set_margin_start(12);
     content.set_margin_end(12);
     content.set_margin_top(12);
     content.set_margin_bottom(12);
+    window.set_child(Some(&content));
 
     // Header
-    let header = Label::builder()
+    let header_label = Label::builder()
         .label(format!("🔄 Versionen von: {}", key))
         .css_classes(["heading"])
         .halign(Align::Start)
         .build();
-    content.append(&header);
+    content.append(&header_label);
 
     // Loading label
     let loading_label = Label::builder()
@@ -130,7 +131,7 @@ pub fn show_version_history(
     let client_r = s3_client.clone();
     let bucket_r = bucket_owned.clone();
     let key_r = key_owned.clone();
-    let dialog_r = dialog.clone();
+    let window_r = window.clone();
     let selected_r = selected.clone();
     let versions_r = versions_cell.clone();
     restore_btn.connect_clicked(move |_| {
@@ -142,12 +143,12 @@ pub fn show_version_history(
                 let bucket = bucket_r.clone();
                 let key = key_r.clone();
                 let vid = v.version_id.clone();
-                let dialog = dialog_r.clone();
+                let window = window_r.clone();
                 glib::MainContext::default().spawn_local(async move {
                     match client.restore_object_version(&bucket, &key, &vid).await {
                         Ok(()) => {
                             info!(key = %key, version = %vid, "Version restored");
-                            dialog.close();
+                            window.close();
                         }
                         Err(e) => {
                             error!(key = %key, version = %vid, error = %e, "Restore failed");
@@ -162,7 +163,7 @@ pub fn show_version_history(
     let client_d = s3_client.clone();
     let bucket_d = bucket_owned.clone();
     let key_d = key_owned.clone();
-    let dialog_d = dialog.clone();
+    let window_d = window.clone();
     let selected_d = selected.clone();
     let versions_d = versions_cell.clone();
     delete_btn.connect_clicked(move |_| {
@@ -174,12 +175,12 @@ pub fn show_version_history(
                 let bucket = bucket_d.clone();
                 let key = key_d.clone();
                 let vid = v.version_id.clone();
-                let dialog = dialog_d.clone();
+                let window = window_d.clone();
                 glib::MainContext::default().spawn_local(async move {
                     match client.delete_object_version(&bucket, &key, &vid).await {
                         Ok(()) => {
                             info!(key = %key, version = %vid, "Version deleted");
-                            dialog.close();
+                            window.close();
                         }
                         Err(e) => {
                             error!(key = %key, version = %vid, error = %e, "Delete failed");
@@ -220,12 +221,12 @@ pub fn show_version_history(
     });
 
     // Close button
-    let dialog_c = dialog.clone();
+    let window_c = window.clone();
     close_btn.connect_clicked(move |_| {
-        dialog_c.close();
+        window_c.close();
     });
 
-    dialog.show();
+    window.present();
 }
 
 /// Create the version list ColumnView

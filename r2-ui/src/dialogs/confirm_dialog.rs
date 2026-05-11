@@ -1,7 +1,7 @@
 //! r2-ui — Confirmation dialog
 
 use gtk4::prelude::*;
-use gtk4::{Align, Box as GtkBox, Button, Dialog, Label, Orientation};
+use gtk4::{Align, Box as GtkBox, Button, Label, Orientation, Window};
 use std::cell::Cell;
 
 /// Shows a confirmation dialog.
@@ -14,20 +14,18 @@ pub fn show_confirm_dialog(
     destructive: bool,
     on_confirm: Box<dyn Fn() + 'static>,
 ) {
-    let dialog = Dialog::builder()
-        .title(title)
-        .transient_for(parent)
-        .modal(true)
-        .default_width(400)
-        .build();
+    let window = Window::new();
+    window.set_title(Some(title));
+    window.set_transient_for(Some(&parent.clone().upcast::<gtk4::Window>()));
+    window.set_modal(true);
+    window.set_default_size(400, -1);
 
-    let content = dialog.content_area();
-    content.set_orientation(Orientation::Vertical);
-    content.set_spacing(12);
+    let content = GtkBox::new(Orientation::Vertical, 12);
     content.set_margin_start(12);
     content.set_margin_end(12);
     content.set_margin_top(12);
     content.set_margin_bottom(12);
+    window.set_child(Some(&content));
 
     let label = Label::builder()
         .label(message)
@@ -61,17 +59,17 @@ pub fn show_confirm_dialog(
     content.append(&button_box);
 
     let confirmed = Cell::new(false);
-    let dialog_clone = dialog.clone();
+    let window_clone = window.clone();
     confirm_btn.connect_clicked(move |_| {
         confirmed.set(true);
-        dialog_clone.close();
+        window_clone.close();
         on_confirm();
     });
 
-    let dialog_clone2 = dialog.clone();
+    let window_clone2 = window.clone();
     cancel_btn.connect_clicked(move |_| {
-        dialog_clone2.close();
+        window_clone2.close();
     });
 
-    dialog.show();
+    window.present();
 }

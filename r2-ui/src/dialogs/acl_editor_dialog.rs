@@ -5,9 +5,9 @@
 
 use gtk4::prelude::*;
 use gtk4::{
-    Align, Box as GtkBox, Button, ComboBoxText, Dialog, Entry, Label,
+    Align, Box as GtkBox, Button, DropDown, Entry, HeaderBar, Label,
     ListView, NoSelection, Orientation, ScrolledWindow, SignalListItemFactory,
-    StringList, StringObject,
+    StringList, StringObject, Window,
 };
 use std::sync::Arc;
 use tracing::{error, info};
@@ -32,29 +32,30 @@ pub fn show_acl_editor(
         format!("ACL-Editor: {}", bucket)
     };
 
-    let dialog = Dialog::builder()
-        .title(&title)
-        .transient_for(parent)
-        .modal(true)
-        .default_width(600)
-        .default_height(500)
-        .build();
+    let window = Window::new();
+    window.set_title(Some(&title));
+    window.set_transient_for(Some(parent));
+    window.set_modal(true);
+    window.set_default_size(600, 500);
 
-    let content = dialog.content_area();
-    content.set_orientation(Orientation::Vertical);
-    content.set_spacing(8);
+    let header = HeaderBar::new();
+    header.set_show_title_buttons(true);
+    window.set_titlebar(Some(&header));
+
+    let content = GtkBox::new(Orientation::Vertical, 8);
     content.set_margin_start(12);
     content.set_margin_end(12);
     content.set_margin_top(12);
     content.set_margin_bottom(12);
+    window.set_child(Some(&content));
 
     // Header
-    let header = Label::builder()
+    let header_label = Label::builder()
         .label(&title)
         .css_classes(["heading"])
         .halign(Align::Start)
         .build();
-    content.append(&header);
+    content.append(&header_label);
 
     let type_label = Label::builder()
         .label(if is_object { "Typ: Objekt-ACL" } else { "Typ: Bucket-ACL" })
@@ -88,11 +89,9 @@ pub fn show_acl_editor(
         .margin_top(8)
         .build();
 
-    let grantee_type_combo = ComboBoxText::new();
-    grantee_type_combo.append_text("AllUsers (öffentlich)");
-    grantee_type_combo.append_text("AuthenticatedUsers");
-    grantee_type_combo.append_text("CanonicalUser");
-    grantee_type_combo.set_active(Some(0));
+    let grantee_types = StringList::new(&["AllUsers (öffentlich)", "AuthenticatedUsers", "CanonicalUser"]);
+    let grantee_type_combo = DropDown::new(Some(grantee_types), None::<&gtk4::Expression>);
+    grantee_type_combo.set_selected(0);
     add_section.append(&grantee_type_combo);
 
     let id_entry = Entry::builder()
@@ -101,13 +100,9 @@ pub fn show_acl_editor(
         .build();
     add_section.append(&id_entry);
 
-    let permission_combo = ComboBoxText::new();
-    permission_combo.append_text("READ");
-    permission_combo.append_text("WRITE");
-    permission_combo.append_text("READ_ACP");
-    permission_combo.append_text("WRITE_ACP");
-    permission_combo.append_text("FULL_CONTROL");
-    permission_combo.set_active(Some(0));
+    let permissions = StringList::new(&["READ", "WRITE", "READ_ACP", "WRITE_ACP", "FULL_CONTROL"]);
+    let permission_combo = DropDown::new(Some(permissions), None::<&gtk4::Expression>);
+    permission_combo.set_selected(0);
     add_section.append(&permission_combo);
 
     let add_btn = Button::builder()
@@ -174,7 +169,7 @@ pub fn show_acl_editor(
     let perm_combo_a = permission_combo.clone();
 
     add_btn.connect_clicked(move |_| {
-        let grantee_type_idx = grantee_combo_a.active().unwrap_or(0);
+        let grantee_type_idx = grantee_combo_a.selected();
         let grantee_type = match grantee_type_idx {
             0 => "Group",
             1 => "Group",
@@ -188,7 +183,7 @@ pub fn show_acl_editor(
         };
         let id = id_entry_a.text().to_string();
         let id = if id.is_empty() { None } else { Some(id) };
-        let permission_idx = perm_combo_a.active().unwrap_or(0);
+        let permission_idx = perm_combo_a.selected();
         let permission = match permission_idx {
             0 => "READ",
             1 => "WRITE",
@@ -217,7 +212,7 @@ pub fn show_acl_editor(
     let client_s = s3_client.clone();
     let bucket_s = bucket_owned.clone();
     let key_s = key_owned.clone();
-    let dialog_s = dialog.clone();
+    let window_s = window.clone();
     let status_s = status_label.clone();
 
     save_btn.connect_clicked(move |_| {
@@ -225,7 +220,7 @@ pub fn show_acl_editor(
         let client = client_s.clone();
         let bucket = bucket_s.clone();
         let key = key_s.clone();
-        let dialog = dialog_s.clone();
+        let window = window_s.clone();
         let status = status_s.clone();
 
         status.set_label("Speichere ACL...");
@@ -240,7 +235,7 @@ pub fn show_acl_editor(
             match result {
                 Ok(()) => {
                     info!(bucket = %bucket, "ACL saved successfully");
-                    dialog.close();
+                    window.close();
                 }
                 Err(e) => {
                     error!(bucket = %bucket, error = %e, "Failed to save ACL");
@@ -251,12 +246,12 @@ pub fn show_acl_editor(
     });
 
     // Cancel
-    let dialog_c = dialog.clone();
+    let window_c = window.clone();
     cancel_btn.connect_clicked(move |_| {
-        dialog_c.close();
+        window_c.close();
     });
 
-    dialog.show();
+    window.present();
 }
 
 /// Create a ListView for ACL grants

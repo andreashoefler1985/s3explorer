@@ -1,7 +1,7 @@
 //! r2-ui — Rename dialog for S3 objects
 
 use gtk4::prelude::*;
-use gtk4::{Align, Box as GtkBox, Button, Dialog, Entry, Label, Orientation};
+use gtk4::{Align, Box as GtkBox, Button, Entry, Label, Orientation, Window};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -11,20 +11,18 @@ pub fn show_rename_dialog(
     current_name: &str,
     on_rename: Box<dyn Fn(String) + 'static>,
 ) {
-    let dialog = Dialog::builder()
-        .title("Objekt umbenennen")
-        .transient_for(parent)
-        .modal(true)
-        .default_width(400)
-        .build();
+    let window = Window::new();
+    window.set_title(Some("Objekt umbenennen"));
+    window.set_transient_for(Some(&parent.clone().upcast::<gtk4::Window>()));
+    window.set_modal(true);
+    window.set_default_size(400, -1);
 
-    let content = dialog.content_area();
-    content.set_orientation(Orientation::Vertical);
-    content.set_spacing(8);
+    let content = GtkBox::new(Orientation::Vertical, 8);
     content.set_margin_start(12);
     content.set_margin_end(12);
     content.set_margin_top(12);
     content.set_margin_bottom(12);
+    window.set_child(Some(&content));
 
     let label = Label::builder()
         .label("Neuer Name:")
@@ -62,7 +60,7 @@ pub fn show_rename_dialog(
 
     // Rename button
     let on_rename_btn = on_rename.clone();
-    let dialog_clone = dialog.clone();
+    let window_clone = window.clone();
     let entry_clone = entry.clone();
     rename_btn.connect_clicked(move |_| {
         let new_name = entry_clone.text().trim().to_string();
@@ -70,19 +68,19 @@ pub fn show_rename_dialog(
             if let Some(cb) = on_rename_btn.borrow_mut().take() {
                 cb(new_name);
             }
-            dialog_clone.close();
+            window_clone.close();
         }
     });
 
     // Cancel button
-    let dialog_clone2 = dialog.clone();
+    let window_clone2 = window.clone();
     cancel_btn.connect_clicked(move |_| {
-        dialog_clone2.close();
+        window_clone2.close();
     });
 
     // Enter key in entry
     let on_rename_enter = on_rename.clone();
-    let dialog_clone3 = dialog.clone();
+    let window_clone3 = window.clone();
     let entry_clone2 = entry.clone();
     entry.connect_activate(move |_| {
         let new_name = entry_clone2.text().trim().to_string();
@@ -90,9 +88,9 @@ pub fn show_rename_dialog(
             if let Some(cb) = on_rename_enter.borrow_mut().take() {
                 cb(new_name);
             }
-            dialog_clone3.close();
+            window_clone3.close();
         }
     });
 
-    dialog.show();
+    window.present();
 }

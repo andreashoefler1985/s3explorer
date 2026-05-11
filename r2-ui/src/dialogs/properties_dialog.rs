@@ -2,7 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use gtk4::prelude::*;
-use gtk4::{Align, Box as GtkBox, Button, Dialog, Label, Orientation};
+use gtk4::{Align, Box as GtkBox, Button, Label, Orientation, Window};
 
 use r2_core::s3_client::types::{BucketInfo, ObjectInfo};
 
@@ -11,20 +11,18 @@ pub fn show_bucket_properties(
     parent: &impl IsA<gtk4::Window>,
     bucket: &BucketInfo,
 ) {
-    let dialog = Dialog::builder()
-        .title(format!("Bucket-Eigenschaften: {}", bucket.name))
-        .transient_for(parent)
-        .modal(true)
-        .default_width(450)
-        .build();
+    let window = Window::new();
+    window.set_title(Some(&format!("Bucket-Eigenschaften: {}", bucket.name)));
+    window.set_transient_for(Some(&parent.clone().upcast::<gtk4::Window>()));
+    window.set_modal(true);
+    window.set_default_size(450, -1);
 
-    let content = dialog.content_area();
-    content.set_orientation(Orientation::Vertical);
-    content.set_spacing(8);
+    let content = GtkBox::new(Orientation::Vertical, 8);
     content.set_margin_start(12);
     content.set_margin_end(12);
     content.set_margin_top(12);
     content.set_margin_bottom(12);
+    window.set_child(Some(&content));
 
     // Header
     let header = Label::builder()
@@ -58,13 +56,13 @@ pub fn show_bucket_properties(
         .margin_top(16)
         .build();
 
-    let dialog_clone = dialog.clone();
+    let window_clone = window.clone();
     close_btn.connect_clicked(move |_| {
-        dialog_clone.close();
+        window_clone.close();
     });
     content.append(&close_btn);
 
-    dialog.show();
+    window.present();
 }
 
 /// Shows object properties dialog
@@ -73,20 +71,18 @@ pub fn show_object_properties(
     obj: &ObjectInfo,
     bucket_name: &str,
 ) {
-    let dialog = Dialog::builder()
-        .title("Objekt-Informationen")
-        .transient_for(parent)
-        .modal(true)
-        .default_width(450)
-        .build();
+    let window = Window::new();
+    window.set_title(Some("Objekt-Informationen"));
+    window.set_transient_for(Some(&parent.clone().upcast::<gtk4::Window>()));
+    window.set_modal(true);
+    window.set_default_size(450, -1);
 
-    let content = dialog.content_area();
-    content.set_orientation(Orientation::Vertical);
-    content.set_spacing(8);
+    let content = GtkBox::new(Orientation::Vertical, 8);
     content.set_margin_start(12);
     content.set_margin_end(12);
     content.set_margin_top(12);
     content.set_margin_bottom(12);
+    window.set_child(Some(&content));
 
     // Header
     let icon = if obj.is_prefix { "📁" } else { "📄" };
@@ -133,13 +129,13 @@ pub fn show_object_properties(
         .margin_top(16)
         .build();
 
-    let dialog_clone = dialog.clone();
+    let window_clone = window.clone();
     close_btn.connect_clicked(move |_| {
-        dialog_clone.close();
+        window_clone.close();
     });
     content.append(&close_btn);
 
-    dialog.show();
+    window.present();
 }
 
 /// Create a property row with label and value

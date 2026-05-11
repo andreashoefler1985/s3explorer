@@ -5,32 +5,16 @@
 
 use gtk4::prelude::*;
 use gtk4::{
-    Box as GtkBox, Button, Label, LevelBar, ListView, NoSelection,
-    Orientation, SignalListItemFactory, Stack, StackSidebar, StringList,
-    StringObject, ToggleButton,
+    Box as GtkBox, Button, Label,
+    Orientation, Stack, StackSidebar, ToggleButton,
 };
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
-use tracing::{debug, info, warn};
-use uuid::Uuid;
+use tracing::{debug, warn};
 
 use r2_core::transfer::{
-    TransferEngine, TransferJob, TransferProgress, TransferStatus,
+    TransferEngine, TransferProgress,
 };
-
-/// Format bytes in human-readable form (KB, MB, GB, TB)
-fn format_speed(bytes_per_sec: f64) -> String {
-    if bytes_per_sec >= 1_000_000_000.0 {
-        format!("{:.1} GB/s", bytes_per_sec / 1_000_000_000.0)
-    } else if bytes_per_sec >= 1_000_000.0 {
-        format!("{:.1} MB/s", bytes_per_sec / 1_000_000.0)
-    } else if bytes_per_sec >= 1_000.0 {
-        format!("{:.1} KB/s", bytes_per_sec / 1_000.0)
-    } else {
-        format!("{:.0} B/s", bytes_per_sec)
-    }
-}
 
 /// Format bytes in human-readable form
 fn format_bytes(bytes: u64) -> String {
@@ -45,25 +29,6 @@ fn format_bytes(bytes: u64) -> String {
     }
 }
 
-/// Format ETA in human-readable form
-fn format_eta(secs: f64) -> String {
-    if secs.is_nan() || secs.is_infinite() || secs <= 0.0 {
-        return "—".to_string();
-    }
-    let total_secs = secs as u64;
-    let hours = total_secs / 3600;
-    let minutes = (total_secs % 3600) / 60;
-    let seconds = total_secs % 60;
-
-    if hours > 0 {
-        format!("{}h {}min", hours, minutes)
-    } else if minutes > 0 {
-        format!("{}min {}s", minutes, seconds)
-    } else {
-        format!("{}s", seconds)
-    }
-}
-
 /// Transfer queue widget
 pub struct TransferQueueWidget {
     pub container: GtkBox,
@@ -73,19 +38,11 @@ pub struct TransferQueueWidget {
     pub retry_all_btn: Button,
     pub resume_all_btn: Button,
 
-    // Internal state
-    active_jobs: Vec<TransferJob>,
-    completed_jobs: Vec<TransferJob>,
-    failed_jobs: Vec<TransferJob>,
-
     // Progress receiver
     progress_rx: Option<mpsc::UnboundedReceiver<TransferProgress>>,
 
     // Engine reference
     engine: Option<Arc<dyn TransferEngine>>,
-
-    // UI update flag
-    needs_update: Arc<AtomicBool>,
 }
 
 impl TransferQueueWidget {
@@ -185,12 +142,8 @@ impl TransferQueueWidget {
             clear_completed_btn,
             retry_all_btn,
             resume_all_btn,
-            active_jobs: Vec::new(),
-            completed_jobs: Vec::new(),
-            failed_jobs: Vec::new(),
             progress_rx: None,
             engine: None,
-            needs_update: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -200,14 +153,12 @@ impl TransferQueueWidget {
 
         // Subscribe to progress events
         let engine_clone = engine.clone();
-        let needs_update = self.needs_update.clone();
 
         glib::MainContext::default().spawn_local(async move {
             let mut rx = engine_clone.subscribe().await;
             loop {
                 match rx.recv().await {
                     Some(_progress) => {
-                        needs_update.store(true, Ordering::SeqCst);
                         // Trigger UI update via idle callback
                         glib::idle_add_local(|| {
                             glib::ControlFlow::Continue
@@ -264,24 +215,6 @@ impl TransferQueueWidget {
         });
     }
 
-    /// Add a job to the active list
-    pub fn add_job(&mut self, job: TransferJob) {
-        self.active_jobs.push(job);
-        self.update_header();
-    }
-
-    /// Update the header with job counts
-    fn update_header(&self) {
-        let active_count = self.active_jobs.len();
-        let completed_count = self.completed_jobs.len();
-        let failed_count = self.failed_jobs.len();
-
-        let label = format!(
-            "🔲 Transfer-Queue ▾  {} aktiv · {} abgeschlossen · {} fehlgeschlagen",
-            active_count, completed_count, failed_count
-        );
-        self.toggle_btn.set_label(&label);
-    }
 }
 
 /// Create a page for the job list stack

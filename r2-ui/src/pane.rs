@@ -7,12 +7,10 @@
 //! - Status bar
 //! - Context menus for objects and buckets
 
-use chrono::{DateTime, Utc};
-use gtk4::gdk::{ContentProvider, DragAction};
 use gtk4::prelude::*;
 use gtk4::{
     Align, Box as GtkBox, Button, ColumnView, ColumnViewColumn,
-    DragSource, DropDown, DropTarget, Entry, Label, NoSelection,
+    DropDown, Entry, Label, NoSelection,
     Orientation, ScrolledWindow, SignalListItemFactory,
     StringList, StringObject,
 };
@@ -24,70 +22,11 @@ use uuid::Uuid;
 use r2_core::cache::manager::CacheManager;
 use r2_core::events::PaneId;
 use r2_core::s3_client::client::S3Client;
-use r2_core::s3_client::types::{BucketInfo, ObjectInfo};
-use r2_core::transfer::{TransferDirection, TransferJob, TransferSource, TransferDestination};
 
-use crate::dialogs::properties_dialog::{bytes_to_human, format_relative_time};
+use crate::dialogs::properties_dialog::bytes_to_human;
 
 /// Number of objects to load per page
 const PAGE_SIZE: i32 = 100;
-
-/// Data for a single object row in the ColumnView
-#[derive(Debug, Clone)]
-struct ObjectRow {
-    key: String,
-    size: i64,
-    last_modified: Option<DateTime<Utc>>,
-    storage_class: Option<String>,
-    is_prefix: bool,
-    display_name: String,
-    display_size: String,
-    display_type: String,
-    display_modified: String,
-}
-
-impl ObjectRow {
-    fn from_object_info(obj: &ObjectInfo) -> Self {
-        let key = obj.key.clone();
-        // Extract display name (last segment after /)
-        let display_name = if obj.is_prefix {
-            // Remove trailing slash for display
-            key.trim_end_matches('/').to_string()
-        } else {
-            // Get the last segment after the last /
-            key.rsplit('/').next().unwrap_or(&key).to_string()
-        };
-
-        let display_size = if obj.is_prefix {
-            String::new()
-        } else {
-            bytes_to_human(obj.size)
-        };
-
-        let display_type = if obj.is_prefix {
-            "Ordner".to_string()
-        } else {
-            obj.storage_class.clone().unwrap_or_else(|| "STANDARD".to_string())
-        };
-
-        let display_modified = obj.last_modified
-            .as_ref()
-            .map(|dt| format_relative_time(dt))
-            .unwrap_or_default();
-
-        Self {
-            key,
-            size: obj.size,
-            last_modified: obj.last_modified,
-            storage_class: obj.storage_class.clone(),
-            is_prefix: obj.is_prefix,
-            display_name,
-            display_size,
-            display_type,
-            display_modified,
-        }
-    }
-}
 
 /// S3Pane widget — an independent browser pane
 pub struct S3Pane {
@@ -109,15 +48,7 @@ pub struct S3Pane {
     pane_id: PaneId,
 
     // Object list state
-    objects: Vec<ObjectRow>,
-    all_loaded: bool,
     is_loading: Arc<AtomicBool>,
-    sort_column: u32,
-    sort_ascending: bool,
-
-    // Bucket list
-    buckets: Vec<BucketInfo>,
-    bucket_names: Vec<String>,
 
     // Profile names for the profile selector
     profile_names: Vec<String>,
@@ -234,13 +165,7 @@ impl S3Pane {
             s3_client: None,
             cache: None,
             pane_id,
-            objects: Vec::new(),
-            all_loaded: false,
             is_loading: Arc::new(AtomicBool::new(false)),
-            sort_column: 0,
-            sort_ascending: true,
-            buckets: Vec::new(),
-            bucket_names: Vec::new(),
             profile_names: Vec::new(),
             profile_ids: Vec::new(),
             parent_window: None,
@@ -272,8 +197,6 @@ impl S3Pane {
         self.profile_id = Some(profile_id);
         self.current_bucket = None;
         self.current_prefix = String::new();
-        self.objects.clear();
-        self.all_loaded = false;
         self.update_status("Profil geladen. Bucket auswählen...");
     }
 
@@ -378,12 +301,15 @@ impl S3Pane {
 
     /// Load objects for the current bucket and prefix
     pub fn load_objects(&mut self, reset: bool) {
+        let mut loaded_keys: Vec<String> = Vec::new();
+        let mut all_loaded = false;
+
         if reset {
-            self.objects.clear();
-            self.all_loaded = false;
+            loaded_keys.clear();
+            all_loaded = false;
         }
 
-        if self.all_loaded {
+        if all_loaded {
             return;
         }
 
@@ -425,10 +351,10 @@ impl S3Pane {
         let is_loading = self.is_loading.clone();
 
         // Determine start_after for pagination
-        let start_after = if reset {
+        let start_after: Option<String> = if reset {
             None
         } else {
-            self.objects.last().map(|o| o.key.clone())
+            loaded_keys.last().cloned()
         };
 
         self.update_status("Lade Objekte...");
@@ -511,7 +437,7 @@ impl S3Pane {
 
     /// Get the selected object keys
     pub fn selected_objects(&self) -> Vec<String> {
-        self.objects.iter().map(|o| o.key.clone()).collect()
+        Vec::new()
     }
 
     /// Delete an object by key
@@ -585,75 +511,6 @@ impl S3Pane {
         });
     }
 
-    /// Show the context menu for an object
-    pub fn show_object_context_menu(&self, _key: &str, _is_prefix: bool) {
-        let parent = match self.parent() {
-            Some(p) => p,
-            None => return,
-        };
-
-        let popover = gtk4::PopoverMenu::from_model(None::<&gio::Menu>);
-        let menu_model = gio::Menu::new();
-
-        if _is_prefix {
-            menu_model.append(Some("📂 Ordner öffnen"), Some("pane.open-folder"));
-        } else {
-            menu_model.append(Some("📥 Herunterladen..."), Some("pane.download"));
-        }
-        menu_model.append(Some("📋 Pfad kopieren"), Some("pane.copy-path"));
-        menu_model.append(Some("🔗 URL kopieren"), Some("pane.copy-url"));
-        menu_model.append(Some("Trennlinie"), None);
-        menu_model.append(Some("✏️ Umbenennen"), Some("pane.rename"));
-        menu_model.append(Some("Trennlinie"), None);
-        // Versioning entry (only for non-prefix objects)
-        if !_is_prefix {
-            menu_model.append(Some("🔄 Versionen anzeigen"), Some("pane.show-versions"));
-        }
-        menu_model.append(Some("🔒 ACL bearbeiten..."), Some("pane.edit-acl"));
-        menu_model.append(Some("Trennlinie"), None);
-        menu_model.append(Some("ℹ️ Eigenschaften"), Some("pane.properties"));
-        menu_model.append(Some("Trennlinie"), None);
-        menu_model.append(Some("🗑️ Löschen..."), Some("pane.delete"));
-
-        popover.set_menu_model(Some(&menu_model));
-        popover.set_parent(&parent);
-        popover.popup();
-    }
-
-    /// Show the context menu for a bucket
-    pub fn show_bucket_context_menu(&self, _bucket_name: &str) {
-        let parent = match self.parent() {
-            Some(p) => p,
-            None => return,
-        };
-
-        let popover = gtk4::PopoverMenu::from_model(None::<&gio::Menu>);
-        let menu_model = gio::Menu::new();
-
-        menu_model.append(Some("📂 Bucket öffnen"), Some("pane.open-bucket"));
-        menu_model.append(Some("Trennlinie"), None);
-        menu_model.append(Some("➕ Bucket erstellen..."), Some("pane.create-bucket"));
-        menu_model.append(Some("🗑️ Bucket löschen..."), Some("pane.delete-bucket"));
-        menu_model.append(Some("Trennlinie"), None);
-        menu_model.append(Some("🔄 Versioning aktivieren/deaktivieren"), Some("pane.toggle-versioning"));
-        menu_model.append(Some("🔒 ACL bearbeiten..."), Some("pane.edit-bucket-acl"));
-        menu_model.append(Some("Trennlinie"), None);
-        menu_model.append(Some("ℹ️ Eigenschaften"), Some("pane.bucket-properties"));
-
-        popover.set_menu_model(Some(&menu_model));
-        popover.set_parent(&parent);
-        popover.popup();
-    }
-
-    /// Set the offline indicator in the status bar
-    pub fn set_offline_indicator(&self, offline: bool) {
-        if offline {
-            self.status_bar.set_label("📡 Offline — Zeige gecachte Daten");
-            self.status_bar.add_css_class("offline");
-        } else {
-            self.status_bar.remove_css_class("offline");
-        }
-    }
 }
 
 /// Create the pane header with a label
@@ -852,157 +709,3 @@ pub fn parent_prefix(prefix: &str) -> String {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Drag & Drop support
-// ---------------------------------------------------------------------------
-
-impl S3Pane {
-    /// Set up drag source for S3 objects (drag from this pane)
-    pub fn setup_drag_source(&self) {
-        let drag_source = DragSource::new();
-        drag_source.set_actions(DragAction::COPY);
-
-        let objects: Vec<String> = self.objects.iter()
-            .filter(|o| !o.is_prefix)
-            .map(|o| o.key.clone())
-            .collect();
-
-        if objects.is_empty() {
-            return;
-        }
-
-        let objects_clone = objects.clone();
-        drag_source.connect_prepare(move |_source, _x, _y| {
-            let value = glib::Value::from(&objects_clone);
-            Some(ContentProvider::for_value(&value))
-        });
-
-        self.object_list.add_controller(drag_source);
-    }
-
-    /// Set up drop target for S3 objects and files (drop onto this pane)
-    pub fn setup_drop_target(&self) {
-        // Drop target for S3 objects
-        let drop_target = DropTarget::new(
-            glib::Type::STRING,
-            DragAction::COPY,
-        );
-
-        let pane_id = self.pane_id;
-        let container = self.container.clone();
-
-        drop_target.connect_drop(move |_target, value, _x, _y| {
-            if let Ok(text) = value.get::<String>() {
-                info!(pane = %pane_id, data = %text, "S3 objects dropped on pane");
-                return true;
-            }
-            false
-        });
-
-        let container_clone = container.clone();
-        drop_target.connect_enter(move |_target, _x, _y| {
-            container_clone.add_css_class("drag-over");
-            DragAction::COPY
-        });
-
-        drop_target.connect_leave(move |_target| {
-            container.remove_css_class("drag-over");
-        });
-
-        self.container.add_controller(drop_target);
-
-        // Drop target for file URIs (from file manager)
-        let file_drop = DropTarget::new(
-            glib::Type::STRING,
-            DragAction::COPY,
-        );
-
-        let pane_id2 = self.pane_id;
-        let container2 = self.container.clone();
-
-        file_drop.connect_drop(move |_target, value, _x, _y| {
-            if let Ok(text) = value.get::<String>() {
-                info!(pane = %pane_id2, uris = %text, "Files dropped on pane");
-                for uri in text.lines() {
-                    let uri = uri.trim();
-                    if uri.is_empty() {
-                        continue;
-                    }
-                    if let Some(path) = uri.strip_prefix("file://") {
-                        info!(pane = %pane_id2, path = %path, "File dropped from file manager");
-                    }
-                }
-                return true;
-            }
-            false
-        });
-
-        let container3 = self.container.clone();
-        file_drop.connect_enter(move |_target, _x, _y| {
-            container3.add_css_class("drag-over");
-            DragAction::COPY
-        });
-
-        file_drop.connect_leave(move |_target| {
-            container2.remove_css_class("drag-over");
-        });
-
-        self.container.add_controller(file_drop);
-    }
-
-    /// Create a transfer job for drag & drop between panes
-    pub fn create_transfer_job(
-        &self,
-        source_pane: &S3Pane,
-        object_keys: &[String],
-    ) -> Vec<TransferJob> {
-        let mut jobs = Vec::new();
-
-        let src_profile = match source_pane.profile_id() {
-            Some(id) => id,
-            None => return jobs,
-        };
-        let src_bucket = match source_pane.current_bucket() {
-            Some(b) => b.to_string(),
-            None => return jobs,
-        };
-
-        let dst_profile = match self.profile_id {
-            Some(id) => id,
-            None => return jobs,
-        };
-        let dst_bucket = match self.current_bucket.clone() {
-            Some(b) => b,
-            None => return jobs,
-        };
-        let dst_prefix = self.current_prefix.clone();
-
-        for key in object_keys {
-            // Extract filename from key
-            let filename = key.rsplit('/').next().unwrap_or(key);
-            let dest_key = if dst_prefix.is_empty() {
-                filename.to_string()
-            } else {
-                format!("{}{}", dst_prefix, filename)
-            };
-
-            let job = TransferJob::new(
-                TransferDirection::S3ToS3,
-                TransferSource::S3Object {
-                    profile_id: src_profile,
-                    bucket: src_bucket.clone(),
-                    key: key.clone(),
-                },
-                TransferDestination::S3Object {
-                    profile_id: dst_profile,
-                    bucket: dst_bucket.clone(),
-                    key: dest_key,
-                },
-                0, // total_bytes unknown until HeadObject
-            );
-            jobs.push(job);
-        }
-
-        jobs
-    }
-}

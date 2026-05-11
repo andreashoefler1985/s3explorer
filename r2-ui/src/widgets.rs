@@ -1,6 +1,6 @@
 //! r2-ui — GTK4 widget helper functions
 
-use gtk4::{Button, Entry, Label, PasswordEntry, Widget};
+use gtk4::{Entry, Label, PasswordEntry};
 
 /// Create a labeled entry row
 pub fn labeled_entry(label_text: &str, placeholder: &str) -> (Label, Entry) {
@@ -43,36 +43,5 @@ pub fn section_header(text: &str) -> Label {
         .halign(gtk4::Align::Start)
         .margin_bottom(8)
         .margin_top(8)
-        .build()
-}
-
-/// Create a primary action button
-pub fn primary_button(label: &str) -> Button {
-    Button::builder()
-        .label(label)
-        .css_classes(["suggested-action"])
-        .build()
-}
-
-/// Create a destructive action button
-pub fn destructive_button(label: &str) -> Button {
-    Button::builder()
-        .label(label)
-        .css_classes(["destructive-action"])
-        .build()
-}
-
-/// Create a flat button
-pub fn flat_button(label: &str) -> Button {
-    Button::builder()
-        .label(label)
-        .build()
-}
-
-/// Create a spinner for async operations
-pub fn action_spinner() -> gtk4::Spinner {
-    gtk4::Spinner::builder()
-        .width_request(16)
-        .height_request(16)
         .build()
 }

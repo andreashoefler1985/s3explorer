@@ -6,7 +6,7 @@
 use gtk4::prelude::*;
 use gtk4::{
     Application, ApplicationWindow, Box as GtkBox, Label,
-    MenuButton, Orientation, Paned, PopoverMenu, ToggleButton,
+    MenuButton, Orientation, Paned, PopoverMenu,
 };
 use std::sync::Arc;
 use tracing::{error, info};
@@ -14,7 +14,6 @@ use tracing::{error, info};
 use r2_core::cache::manager::{CacheManager, SqliteCacheManager};
 use r2_core::credentials::storage::{CredentialStorage, LibsecretCredentialStorage};
 use r2_core::events::PaneId;
-use r2_core::transfer::{TransferEngine, TokioTransferEngine};
 
 use crate::pane::S3Pane;
 use crate::profile_manager::ProfileManagerDialog;
@@ -25,8 +24,6 @@ pub struct R2App {
     app: Application,
     storage: Arc<dyn CredentialStorage>,
     cache: Arc<dyn CacheManager>,
-    engine: Option<Arc<dyn TransferEngine>>,
-    main_window: Option<ApplicationWindow>,
 }
 
 impl R2App {
@@ -68,8 +65,6 @@ impl R2App {
             app,
             storage,
             cache,
-            engine: None,
-            main_window: None,
         }
     }
 

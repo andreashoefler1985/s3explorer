@@ -4,14 +4,13 @@
 
 use gtk4::prelude::*;
 use gtk4::{
-    Align, ApplicationWindow, Box as GtkBox, Button, Dialog, Entry, Label,
+    Align, ApplicationWindow, Box as GtkBox, Button, Entry, HeaderBar, Label,
     ListView, NoSelection, Orientation, PasswordEntry, SignalListItemFactory,
-    Spinner, StringList, StringObject,
+    Spinner, StringObject, Window,
 };
 use std::sync::Arc;
 use std::sync::Mutex;
 use tracing::{error, info};
-use uuid::Uuid;
 
 use r2_core::credentials::storage::CredentialStorage;
 use r2_core::credentials::profile::Profile;
@@ -20,7 +19,7 @@ use r2_core::s3_client::types::S3ClientConfig;
 
 /// Profile manager dialog
 pub struct ProfileManagerDialog {
-    dialog: Dialog,
+    window: Window,
     storage: Arc<dyn CredentialStorage>,
     profiles: Arc<Mutex<Vec<Profile>>>,
     list_store: gtk4::StringList,
@@ -29,21 +28,22 @@ pub struct ProfileManagerDialog {
 impl ProfileManagerDialog {
     /// Create a new profile manager dialog
     pub fn new(parent: &ApplicationWindow, storage: Arc<dyn CredentialStorage>) -> Self {
-        let dialog = Dialog::builder()
-            .title("Profil-Manager")
-            .transient_for(parent)
-            .modal(true)
-            .default_width(600)
-            .default_height(400)
-            .build();
+        let window = Window::new();
+        window.set_title(Some("Profil-Manager"));
+        window.set_transient_for(Some(parent));
+        window.set_modal(true);
+        window.set_default_size(600, 400);
 
-        let content_area = dialog.content_area();
-        content_area.set_orientation(Orientation::Vertical);
-        content_area.set_spacing(12);
+        let header = HeaderBar::new();
+        header.set_show_title_buttons(true);
+        window.set_titlebar(Some(&header));
+
+        let content_area = GtkBox::new(Orientation::Vertical, 12);
         content_area.set_margin_start(12);
         content_area.set_margin_end(12);
         content_area.set_margin_top(12);
         content_area.set_margin_bottom(12);
+        window.set_child(Some(&content_area));
 
         // Header
         let header = Label::builder()
@@ -87,7 +87,7 @@ impl ProfileManagerDialog {
         let profiles: Arc<Mutex<Vec<Profile>>> = Arc::new(Mutex::new(Vec::new()));
 
         let mut manager = Self {
-            dialog,
+            window,
             storage,
             profiles: profiles.clone(),
             list_store: list_store.clone(),
@@ -137,9 +137,9 @@ impl ProfileManagerDialog {
         }
 
         {
-            let dialog = manager.dialog.clone();
+            let window = manager.window.clone();
             close_btn.connect_clicked(move |_| {
-                dialog.close();
+                window.close();
             });
         }
 
@@ -171,12 +171,12 @@ impl ProfileManagerDialog {
 
     /// Show the dialog
     pub fn show(&self) {
-        self.dialog.show();
+        self.window.present();
     }
 
     /// Hide the dialog
     pub fn hide(&self) {
-        self.dialog.hide();
+        self.window.close();
     }
 }
 
@@ -222,20 +222,22 @@ fn show_profile_form(
     profiles: &Arc<Mutex<Vec<Profile>>>,
     list_store: &gtk4::StringList,
 ) {
-    let dialog = Dialog::builder()
-        .title(if existing.is_some() { "Profil bearbeiten" } else { "Neues Profil" })
-        .transient_for(parent)
-        .modal(true)
-        .default_width(500)
-        .build();
+    let window = Window::new();
+    window.set_title(Some(if existing.is_some() { "Profil bearbeiten" } else { "Neues Profil" }));
+    window.set_transient_for(Some(parent));
+    window.set_modal(true);
+    window.set_default_size(500, -1);
 
-    let content = dialog.content_area();
-    content.set_orientation(Orientation::Vertical);
-    content.set_spacing(8);
+    let header = HeaderBar::new();
+    header.set_show_title_buttons(true);
+    window.set_titlebar(Some(&header));
+
+    let content = GtkBox::new(Orientation::Vertical, 8);
     content.set_margin_start(12);
     content.set_margin_end(12);
     content.set_margin_top(12);
     content.set_margin_bottom(12);
+    window.set_child(Some(&content));
 
     // Form fields
     let name_entry = Entry::builder()
@@ -385,7 +387,7 @@ fn show_profile_form(
     // Save
     {
         let storage = storage.clone();
-        let dialog = dialog.clone();
+        let window = window.clone();
         let name = name_entry.clone();
         let endpoint = endpoint_entry.clone();
         let access_key = access_key_entry.clone();
@@ -433,7 +435,7 @@ fn show_profile_form(
                     }).collect();
                     let refs: Vec<&str> = items.iter().map(|s| s.as_str()).collect();
                     list_store.splice(0, list_store.n_items(), &refs);
-                    dialog.close();
+                    window.close();
                 }
                 Err(e) => {
                     error!("Failed to save profile: {}", e);
@@ -444,13 +446,13 @@ fn show_profile_form(
 
     // Cancel
     {
-        let dialog = dialog.clone();
+        let window = window.clone();
         cancel_btn.connect_clicked(move |_| {
-            dialog.close();
+            window.close();
         });
     }
 
-    dialog.show();
+    window.present();
 }
 
 /// Show delete confirmation dialog
@@ -461,19 +463,22 @@ fn show_delete_confirmation(
     profiles: &Arc<Mutex<Vec<Profile>>>,
     list_store: &gtk4::StringList,
 ) {
-    let dialog = Dialog::builder()
-        .title("Profil löschen")
-        .transient_for(parent)
-        .modal(true)
-        .build();
+    let window = Window::new();
+    window.set_title(Some("Profil löschen"));
+    window.set_transient_for(Some(parent));
+    window.set_modal(true);
+    window.set_default_size(400, -1);
 
-    let content = dialog.content_area();
-    content.set_orientation(Orientation::Vertical);
-    content.set_spacing(12);
+    let header = HeaderBar::new();
+    header.set_show_title_buttons(true);
+    window.set_titlebar(Some(&header));
+
+    let content = GtkBox::new(Orientation::Vertical, 12);
     content.set_margin_start(12);
     content.set_margin_end(12);
     content.set_margin_top(12);
     content.set_margin_bottom(12);
+    window.set_child(Some(&content));
 
     let label = Label::builder()
         .label(format!(
@@ -503,7 +508,7 @@ fn show_delete_confirmation(
     {
         let storage = storage.clone();
         let profile_id = profile.id;
-        let dialog = dialog.clone();
+        let window = window.clone();
         let profiles = profiles.clone();
         let list_store = list_store.clone();
         delete_btn.connect_clicked(move |_| {
@@ -517,7 +522,7 @@ fn show_delete_confirmation(
                     }).collect();
                     let refs: Vec<&str> = items.iter().map(|s| s.as_str()).collect();
                     list_store.splice(0, list_store.n_items(), &refs);
-                    dialog.close();
+                    window.close();
                 }
                 Err(e) => {
                     error!("Failed to delete profile: {}", e);
@@ -527,13 +532,13 @@ fn show_delete_confirmation(
     }
 
     {
-        let dialog = dialog.clone();
+        let window = window.clone();
         cancel_btn.connect_clicked(move |_| {
-            dialog.close();
+            window.close();
         });
     }
 
-    dialog.show();
+    window.present();
 }
 
 /// Create a form row with label and widget
