@@ -1,9 +1,14 @@
 [Desktop Entry]
-Type=Application
 Name=r2
-Comment=S3-kompatibler Object-Storage-Browser
-Exec=r2
+Comment=S3 Object Storage Browser
+Exec=/usr/bin/r2
 Icon=r2
-Categories=Network;FileTransfer;Utility;
 Terminal=false
+Type=Application
+Categories=Utility;FileManager;Network;
 StartupNotify=true
+Actions=NewWindow;
+
+[Desktop Action NewWindow]
+Name=Neues Fenster
+Exec=/usr/bin/r2

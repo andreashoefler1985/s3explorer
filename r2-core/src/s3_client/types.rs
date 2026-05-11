@@ -63,3 +63,39 @@ pub struct Part {
     pub part_number: i32,
     pub e_tag: String,
 }
+
+// ---------------------------------------------------------------------------
+// Versioning types
+// ---------------------------------------------------------------------------
+
+/// An S3 object version
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObjectVersion {
+    pub key: String,
+    pub version_id: String,
+    pub is_latest: bool,
+    pub size: i64,
+    pub last_modified: DateTime<Utc>,
+    pub e_tag: Option<String>,
+    pub storage_class: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// ACL types
+// ---------------------------------------------------------------------------
+
+/// An ACL grant entry
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AclGrant {
+    pub grantee: Grantee,
+    pub permission: String,
+}
+
+/// A grantee (who receives the permission)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Grantee {
+    pub id: Option<String>,
+    pub display_name: Option<String>,
+    pub uri: Option<String>,
+    pub grantee_type: String,
+}

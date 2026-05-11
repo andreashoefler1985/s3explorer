@@ -11,6 +11,14 @@ use super::database::CacheDatabase;
 use crate::error::Result;
 use crate::s3_client::types::{BucketInfo, ObjectInfo};
 
+/// Cache statistics
+#[derive(Debug, Clone, Default)]
+pub struct CacheStats {
+    pub bucket_count: usize,
+    pub object_count: usize,
+    pub cache_age_secs: Option<i64>,
+}
+
 /// CacheManager trait — handles local metadata caching
 pub trait CacheManager: Send + Sync {
     /// Cache bucket list for a profile
@@ -46,6 +54,12 @@ pub trait CacheManager: Send + Sync {
 
     /// Clear all cached data for a profile
     fn clear_cache(&self, profile_id: &Uuid) -> Result<()>;
+
+    /// Get the age of the cache in seconds (oldest entry)
+    fn get_cache_age(&self, profile_id: &Uuid) -> Result<Option<i64>>;
+
+    /// Get cache statistics
+    fn get_cache_stats(&self, profile_id: &Uuid) -> Result<CacheStats>;
 }
 
 /// SQLite-based cache manager implementation
@@ -278,6 +292,75 @@ impl CacheManager for SqliteCacheManager {
                     Ok(elapsed.num_seconds() > self.object_ttl_secs)
                 }
             }
+        })
+    }
+
+    fn get_cache_age(&self, profile_id: &Uuid) -> Result<Option<i64>> {
+        let profile_id_str = profile_id.to_string();
+
+        self.db.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT MIN(cached_at) FROM cached_objects WHERE profile_id = ?1"
+            )?;
+
+            let result: Option<String> = stmt.query_row(
+                params![profile_id_str],
+                |row| row.get(0),
+            ).ok();
+
+            match result {
+                None => Ok(None),
+                Some(date_str) => {
+                    let dt = DateTime::parse_from_rfc3339(&date_str)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .unwrap_or_else(|_| Utc::now());
+                    let age = (Utc::now() - dt).num_seconds();
+                    Ok(Some(age))
+                }
+            }
+        })
+    }
+
+    fn get_cache_stats(&self, profile_id: &Uuid) -> Result<CacheStats> {
+        let profile_id_str = profile_id.to_string();
+
+        self.db.with_conn(|conn| {
+            let bucket_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM cached_buckets WHERE profile_id = ?1",
+                params![profile_id_str],
+                |row| row.get(0),
+            ).unwrap_or(0);
+
+            let object_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM cached_objects WHERE profile_id = ?1",
+                params![profile_id_str],
+                |row| row.get(0),
+            ).unwrap_or(0);
+
+            let cache_age = {
+                let mut stmt = conn.prepare(
+                    "SELECT MIN(cached_at) FROM cached_objects WHERE profile_id = ?1"
+                )?;
+                let result: Option<String> = stmt.query_row(
+                    params![profile_id_str],
+                    |row| row.get(0),
+                ).ok();
+                match result {
+                    None => None,
+                    Some(date_str) => {
+                        let dt = DateTime::parse_from_rfc3339(&date_str)
+                            .map(|dt| dt.with_timezone(&Utc))
+                            .unwrap_or_else(|_| Utc::now());
+                        Some((Utc::now() - dt).num_seconds())
+                    }
+                }
+            };
+
+            Ok(CacheStats {
+                bucket_count: bucket_count as usize,
+                object_count: object_count as usize,
+                cache_age_secs: cache_age,
+            })
         })
     }
 

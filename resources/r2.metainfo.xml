@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.r2</id>
+  <name>r2</name>
+  <summary>S3 Object Storage Browser</summary>
+  <description>
+    <p>Ein nativer S3-kompatibler Object-Storage-Browser für Ubuntu Linux.</p>
+    <p>Features:</p>
+    <ul>
+      <li>Dual-Pane-Browser für S3→S3-Transfers</li>
+      <li>Multipart-Uploads/Downloads mit Pause/Resume</li>
+      <li>Multi-Endpoint-Profil-Management</li>
+      <li>Bucket- und Objekt-Lifecycle-Operationen</li>
+      <li>Versioning und ACL-Management</li>
+      <li>Offline-Cache für schnelles Browsing</li>
+    </ul>
+  </description>
+  <url type="homepage">https://github.com/user/r2</url>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/user/r2/main/screenshots/main.png</image>
+    </screenshot>
+  </screenshots>
+  <categories>
+    <category>Utility</category>
+  </categories>
+  <releases>
+    <release version="0.1.0" date="2025-01-01"/>
+  </releases>
+</component>

@@ -8,11 +8,12 @@
 //! - Context menus for objects and buckets
 
 use chrono::{DateTime, Utc};
+use gtk4::gdk::{ContentProvider, DragAction};
 use gtk4::prelude::*;
 use gtk4::{
     Align, Box as GtkBox, Button, ColumnView, ColumnViewColumn,
-    DropDown, Entry, Label, NoSelection, Orientation,
-    ScrolledWindow, SignalListItemFactory,
+    DragSource, DropDown, DropTarget, Entry, Label, NoSelection,
+    Orientation, ScrolledWindow, SignalListItemFactory,
     StringList, StringObject,
 };
 use std::sync::Arc;
@@ -24,6 +25,7 @@ use r2_core::cache::manager::CacheManager;
 use r2_core::events::PaneId;
 use r2_core::s3_client::client::S3Client;
 use r2_core::s3_client::types::{BucketInfo, ObjectInfo};
+use r2_core::transfer::{TransferDirection, TransferJob, TransferSource, TransferDestination};
 
 use crate::dialogs::properties_dialog::{bytes_to_human, format_relative_time};
 
@@ -603,6 +605,12 @@ impl S3Pane {
         menu_model.append(Some("Trennlinie"), None);
         menu_model.append(Some("✏️ Umbenennen"), Some("pane.rename"));
         menu_model.append(Some("Trennlinie"), None);
+        // Versioning entry (only for non-prefix objects)
+        if !_is_prefix {
+            menu_model.append(Some("🔄 Versionen anzeigen"), Some("pane.show-versions"));
+        }
+        menu_model.append(Some("🔒 ACL bearbeiten..."), Some("pane.edit-acl"));
+        menu_model.append(Some("Trennlinie"), None);
         menu_model.append(Some("ℹ️ Eigenschaften"), Some("pane.properties"));
         menu_model.append(Some("Trennlinie"), None);
         menu_model.append(Some("🗑️ Löschen..."), Some("pane.delete"));
@@ -627,11 +635,24 @@ impl S3Pane {
         menu_model.append(Some("➕ Bucket erstellen..."), Some("pane.create-bucket"));
         menu_model.append(Some("🗑️ Bucket löschen..."), Some("pane.delete-bucket"));
         menu_model.append(Some("Trennlinie"), None);
+        menu_model.append(Some("🔄 Versioning aktivieren/deaktivieren"), Some("pane.toggle-versioning"));
+        menu_model.append(Some("🔒 ACL bearbeiten..."), Some("pane.edit-bucket-acl"));
+        menu_model.append(Some("Trennlinie"), None);
         menu_model.append(Some("ℹ️ Eigenschaften"), Some("pane.bucket-properties"));
 
         popover.set_menu_model(Some(&menu_model));
         popover.set_parent(&parent);
         popover.popup();
+    }
+
+    /// Set the offline indicator in the status bar
+    pub fn set_offline_indicator(&self, offline: bool) {
+        if offline {
+            self.status_bar.set_label("📡 Offline — Zeige gecachte Daten");
+            self.status_bar.add_css_class("offline");
+        } else {
+            self.status_bar.remove_css_class("offline");
+        }
     }
 }
 
@@ -828,5 +849,160 @@ pub fn parent_prefix(prefix: &str) -> String {
         trimmed[..=last_slash].to_string()
     } else {
         String::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Drag & Drop support
+// ---------------------------------------------------------------------------
+
+impl S3Pane {
+    /// Set up drag source for S3 objects (drag from this pane)
+    pub fn setup_drag_source(&self) {
+        let drag_source = DragSource::new();
+        drag_source.set_actions(DragAction::COPY);
+
+        let objects: Vec<String> = self.objects.iter()
+            .filter(|o| !o.is_prefix)
+            .map(|o| o.key.clone())
+            .collect();
+
+        if objects.is_empty() {
+            return;
+        }
+
+        let objects_clone = objects.clone();
+        drag_source.connect_prepare(move |_source, _x, _y| {
+            let value = glib::Value::from(&objects_clone);
+            Some(ContentProvider::for_value(&value))
+        });
+
+        self.object_list.add_controller(drag_source);
+    }
+
+    /// Set up drop target for S3 objects and files (drop onto this pane)
+    pub fn setup_drop_target(&self) {
+        // Drop target for S3 objects
+        let drop_target = DropTarget::new(
+            glib::Type::STRING,
+            DragAction::COPY,
+        );
+
+        let pane_id = self.pane_id;
+        let container = self.container.clone();
+
+        drop_target.connect_drop(move |_target, value, _x, _y| {
+            if let Ok(text) = value.get::<String>() {
+                info!(pane = %pane_id, data = %text, "S3 objects dropped on pane");
+                return true;
+            }
+            false
+        });
+
+        let container_clone = container.clone();
+        drop_target.connect_enter(move |_target, _x, _y| {
+            container_clone.add_css_class("drag-over");
+            DragAction::COPY
+        });
+
+        drop_target.connect_leave(move |_target| {
+            container.remove_css_class("drag-over");
+        });
+
+        self.container.add_controller(drop_target);
+
+        // Drop target for file URIs (from file manager)
+        let file_drop = DropTarget::new(
+            glib::Type::STRING,
+            DragAction::COPY,
+        );
+
+        let pane_id2 = self.pane_id;
+        let container2 = self.container.clone();
+
+        file_drop.connect_drop(move |_target, value, _x, _y| {
+            if let Ok(text) = value.get::<String>() {
+                info!(pane = %pane_id2, uris = %text, "Files dropped on pane");
+                for uri in text.lines() {
+                    let uri = uri.trim();
+                    if uri.is_empty() {
+                        continue;
+                    }
+                    if let Some(path) = uri.strip_prefix("file://") {
+                        info!(pane = %pane_id2, path = %path, "File dropped from file manager");
+                    }
+                }
+                return true;
+            }
+            false
+        });
+
+        let container3 = self.container.clone();
+        file_drop.connect_enter(move |_target, _x, _y| {
+            container3.add_css_class("drag-over");
+            DragAction::COPY
+        });
+
+        file_drop.connect_leave(move |_target| {
+            container2.remove_css_class("drag-over");
+        });
+
+        self.container.add_controller(file_drop);
+    }
+
+    /// Create a transfer job for drag & drop between panes
+    pub fn create_transfer_job(
+        &self,
+        source_pane: &S3Pane,
+        object_keys: &[String],
+    ) -> Vec<TransferJob> {
+        let mut jobs = Vec::new();
+
+        let src_profile = match source_pane.profile_id() {
+            Some(id) => id,
+            None => return jobs,
+        };
+        let src_bucket = match source_pane.current_bucket() {
+            Some(b) => b.to_string(),
+            None => return jobs,
+        };
+
+        let dst_profile = match self.profile_id {
+            Some(id) => id,
+            None => return jobs,
+        };
+        let dst_bucket = match self.current_bucket.clone() {
+            Some(b) => b,
+            None => return jobs,
+        };
+        let dst_prefix = self.current_prefix.clone();
+
+        for key in object_keys {
+            // Extract filename from key
+            let filename = key.rsplit('/').next().unwrap_or(key);
+            let dest_key = if dst_prefix.is_empty() {
+                filename.to_string()
+            } else {
+                format!("{}{}", dst_prefix, filename)
+            };
+
+            let job = TransferJob::new(
+                TransferDirection::S3ToS3,
+                TransferSource::S3Object {
+                    profile_id: src_profile,
+                    bucket: src_bucket.clone(),
+                    key: key.clone(),
+                },
+                TransferDestination::S3Object {
+                    profile_id: dst_profile,
+                    bucket: dst_bucket.clone(),
+                    key: dest_key,
+                },
+                0, // total_bytes unknown until HeadObject
+            );
+            jobs.push(job);
+        }
+
+        jobs
     }
 }

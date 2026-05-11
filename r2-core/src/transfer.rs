@@ -318,14 +318,16 @@ impl TokioTransferEngine {
     }
 
     /// Spawn the actual transfer execution in a new Tokio task.
-    /// This is called from enqueue/retry.
+    /// Delegates to TokioTransferEngineRef::spawn_transfer_inner.
+    /// NOTE: This method is kept for backward compatibility but delegates
+    /// to the ref-based implementation to avoid the &Arc<Self> issue.
     fn spawn_transfer(
         self: &Arc<Self>,
         job_id: Uuid,
         pause_rx: watch::Receiver<bool>,
         cancel_token: CancellationToken,
     ) {
-        let this = self.clone();
+        let jobs = self.jobs.clone();
         let semaphore = self.semaphore.clone();
         let progress_tx = self.progress_tx.clone();
         let client_factory = self.client_factory.clone();
@@ -334,205 +336,16 @@ impl TokioTransferEngine {
         let max_concurrent_parts = self.max_concurrent_parts;
 
         tokio::spawn(async move {
-            // Acquire concurrency permit
-            let _permit = semaphore.acquire().await;
-            if cancel_token.is_cancelled() {
-                return;
-            }
-
-            // Get job details
-            let (direction, source, destination) = {
-                let jobs = this.jobs.lock().await;
-                match jobs.get(&job_id) {
-                    Some(js) => (
-                        js.job.direction.clone(),
-                        js.job.source.clone(),
-                        js.job.destination.clone(),
-                    ),
-                    None => return,
-                }
+            let engine_ref = TokioTransferEngineRef {
+                jobs,
+                semaphore,
+                progress_tx,
+                client_factory,
+                multipart_threshold,
+                chunk_size,
+                max_concurrent_parts,
             };
-
-            // Mark as active
-            {
-                let mut jobs = this.jobs.lock().await;
-                if let Some(js) = jobs.get_mut(&job_id) {
-                    js.job.status = TransferStatus::Active;
-                    js.job.started_at = Some(Utc::now());
-                }
-            }
-
-            let _ = progress_tx.send(TransferProgress {
-                job_id,
-                transferred_bytes: 0,
-                total_bytes: 0,
-                speed_bytes_per_sec: 0.0,
-                status: TransferStatus::Active,
-            });
-
-            // Execute the transfer based on direction
-            let result = match direction {
-                TransferDirection::Upload => {
-                    let (local_path, profile_id, bucket, key) = match (&source, &destination) {
-                        (TransferSource::LocalFile(path), TransferDestination::S3Object { profile_id, bucket, key }) => {
-                            (path.clone(), *profile_id, bucket.clone(), key.clone())
-                        }
-                        _ => {
-                            Err(TransferError::TransferFailed(
-                                "Invalid upload source/destination combination".into()
-                            ))
-                        }
-                    };
-
-                    let (local_path, profile_id, bucket, key) = match result {
-                        Ok(v) => v,
-                        Err(e) => {
-                            update_job_failed(&this.jobs, &progress_tx, job_id, e).await;
-                            return;
-                        }
-                    };
-
-                    let client = match client_factory(profile_id) {
-                        Some(c) => c,
-                        None => {
-                            update_job_failed(&this.jobs, &progress_tx, job_id,
-                                TransferError::TransferFailed(format!("No S3 client for profile {}", profile_id))).await;
-                            return;
-                        }
-                    };
-
-                    let file_size = match tokio::fs::metadata(&local_path).await {
-                        Ok(m) => m.len(),
-                        Err(e) => {
-                            update_job_failed(&this.jobs, &progress_tx, job_id,
-                                TransferError::TransferFailed(format!("Cannot stat file: {}", e))).await;
-                            return;
-                        }
-                    };
-
-                    if file_size >= multipart_threshold {
-                        this.execute_multipart_upload(
-                            &job_id, &local_path, &bucket, &key, client,
-                            progress_tx.clone(), pause_rx, cancel_token,
-                        ).await
-                    } else {
-                        this.execute_single_upload(
-                            &job_id, &local_path, &bucket, &key, client,
-                            progress_tx.clone(), pause_rx, cancel_token,
-                        ).await
-                    }
-                }
-                TransferDirection::Download => {
-                    let (profile_id, bucket, key, local_path) = match (&source, &destination) {
-                        (TransferSource::S3Object { profile_id, bucket, key }, TransferDestination::LocalFile(path)) => {
-                            (*profile_id, bucket.clone(), key.clone(), path.clone())
-                        }
-                        _ => {
-                            update_job_failed(&this.jobs, &progress_tx, job_id,
-                                TransferError::TransferFailed("Invalid download source/destination combination".into())).await;
-                            return;
-                        }
-                    };
-
-                    let client = match client_factory(profile_id) {
-                        Some(c) => c,
-                        None => {
-                            update_job_failed(&this.jobs, &progress_tx, job_id,
-                                TransferError::TransferFailed(format!("No S3 client for profile {}", profile_id))).await;
-                            return;
-                        }
-                    };
-
-                    // Get object size
-                    let head = match client.head_object(&bucket, &key).await {
-                        Ok(h) => h,
-                        Err(e) => {
-                            update_job_failed(&this.jobs, &progress_tx, job_id,
-                                TransferError::TransferFailed(format!("HeadObject failed: {}", e))).await;
-                            return;
-                        }
-                    };
-                    let obj_size = head.size as u64;
-
-                    if obj_size >= multipart_threshold {
-                        this.execute_multipart_download(
-                            &job_id, &local_path, &bucket, &key, obj_size, client,
-                            progress_tx.clone(), pause_rx, cancel_token,
-                        ).await
-                    } else {
-                        this.execute_single_download(
-                            &job_id, &local_path, &bucket, &key, client,
-                            progress_tx.clone(), pause_rx, cancel_token,
-                        ).await
-                    }
-                }
-                TransferDirection::S3ToS3 => {
-                    let (src_profile, src_bucket, src_key, dst_profile, dst_bucket, dst_key) = match (&source, &destination) {
-                        (
-                            TransferSource::S3Object { profile_id: sp, bucket: sb, key: sk },
-                            TransferDestination::S3Object { profile_id: dp, bucket: db, key: dk },
-                        ) => (*sp, sb.clone(), sk.clone(), *dp, db.clone(), dk.clone()),
-                        _ => {
-                            update_job_failed(&this.jobs, &progress_tx, job_id,
-                                TransferError::TransferFailed("Invalid S3→S3 source/destination combination".into())).await;
-                            return;
-                        }
-                    };
-
-                    let src_client = match client_factory(src_profile) {
-                        Some(c) => c,
-                        None => {
-                            update_job_failed(&this.jobs, &progress_tx, job_id,
-                                TransferError::TransferFailed(format!("No S3 client for source profile {}", src_profile))).await;
-                            return;
-                        }
-                    };
-                    let dst_client = match client_factory(dst_profile) {
-                        Some(c) => c,
-                        None => {
-                            update_job_failed(&this.jobs, &progress_tx, job_id,
-                                TransferError::TransferFailed(format!("No S3 client for dest profile {}", dst_profile))).await;
-                            return;
-                        }
-                    };
-
-                    this.execute_s3_to_s3_copy(
-                        &job_id, &src_bucket, &src_key, &dst_bucket, &dst_key,
-                        src_client, dst_client,
-                        progress_tx.clone(), pause_rx, cancel_token,
-                    ).await
-                }
-            };
-
-            // Update final status
-            let mut jobs = this.jobs.lock().await;
-            if let Some(js) = jobs.get_mut(&job_id) {
-                match result {
-                    Ok(()) => {
-                        js.job.status = TransferStatus::Completed;
-                        js.job.completed_at = Some(Utc::now());
-                        let _ = progress_tx.send(TransferProgress {
-                            job_id,
-                            transferred_bytes: js.job.total_bytes,
-                            total_bytes: js.job.total_bytes,
-                            speed_bytes_per_sec: 0.0,
-                            status: TransferStatus::Completed,
-                        });
-                    }
-                    Err(e) => {
-                        let err_str = e.to_string();
-                        js.job.status = TransferStatus::Failed(err_str.clone());
-                        js.job.error_message = Some(err_str.clone());
-                        let _ = progress_tx.send(TransferProgress {
-                            job_id,
-                            transferred_bytes: js.job.transferred_bytes,
-                            total_bytes: js.job.total_bytes,
-                            speed_bytes_per_sec: 0.0,
-                            status: TransferStatus::Failed(err_str),
-                        });
-                    }
-                }
-            }
+            engine_ref.spawn_transfer_inner(job_id, pause_rx, cancel_token).await;
         });
     }
 
@@ -665,7 +478,9 @@ impl TokioTransferEngine {
         if *pause_rx.borrow_and_update() {
             Self::wait_for_resume(&mut pause_rx, &cancel_token).await?;
         }
-        cancel_token.check()?;
+        if cancel_token.is_cancelled() {
+            return Err(TransferError::Cancelled);
+        }
 
         // 1. CreateMultipartUpload
         let upload_id = client.create_multipart_upload(bucket, key).await
@@ -799,7 +614,9 @@ impl TokioTransferEngine {
         if *pause_rx.borrow_and_update() {
             Self::wait_for_resume(&mut pause_rx, &cancel_token).await?;
         }
-        cancel_token.check()?;
+        if cancel_token.is_cancelled() {
+            return Err(TransferError::Cancelled);
+        }
 
         // Ensure parent directory exists
         if let Some(parent) = local_path.parent() {
@@ -925,7 +742,9 @@ impl TokioTransferEngine {
         if *pause_rx.borrow_and_update() {
             Self::wait_for_resume(&mut pause_rx, &cancel_token).await?;
         }
-        cancel_token.check()?;
+        if cancel_token.is_cancelled() {
+            return Err(TransferError::Cancelled);
+        }
 
         // Get source object size
         let head = src_client.head_object(src_bucket, src_key).await
@@ -1261,7 +1080,9 @@ async fn single_upload_fallback(
             }
         }
     }
-    cancel_token.check()?;
+    if cancel_token.is_cancelled() {
+        return Err(TransferError::Cancelled);
+    }
 
     let start = std::time::Instant::now();
     client.put_object(bucket, key, data).await
@@ -1312,7 +1133,9 @@ async fn single_download_fallback(
             }
         }
     }
-    cancel_token.check()?;
+    if cancel_token.is_cancelled() {
+        return Err(TransferError::Cancelled);
+    }
 
     let start = std::time::Instant::now();
     let data = client.get_object(bucket, key).await
@@ -1373,11 +1196,8 @@ impl TransferEngine for TokioTransferEngine {
             jobs.insert(job_id, state);
         }
 
-        // spawn_transfer requires &Arc<Self>. We cannot safely get that from &self,
-        // so we use a different approach: we store the Arc in a static or we restructure.
-        // For now, we call spawn_transfer via a helper that takes the individual Arcs.
-        // Since TokioTransferEngine is always used behind Arc<TokioTransferEngine>,
-        // we use a workaround with a clone of the engine's internal Arcs.
+        let job_id_copy = job_id;
+
         let jobs = self.jobs.clone();
         let semaphore = self.semaphore.clone();
         let progress_tx = self.progress_tx.clone();
@@ -1396,7 +1216,7 @@ impl TransferEngine for TokioTransferEngine {
                 chunk_size,
                 max_concurrent_parts,
             };
-            engine_ref.spawn_transfer_inner(job_id, pause_rx, cancel_token).await;
+            engine_ref.spawn_transfer_inner(job_id_copy, pause_rx, cancel_token).await;
         });
 
         info!(job_id = %job_id, "Transfer job enqueued");
@@ -1497,6 +1317,9 @@ impl TransferEngine for TokioTransferEngine {
         state.pause_tx = Some(pause_tx);
         state.cancel_token = Some(cancel_token.clone());
 
+        // Copy job_id before spawning
+        let job_id_copy = *job_id;
+
         // Spawn new transfer using the engine ref helper
         let jobs = self.jobs.clone();
         let semaphore = self.semaphore.clone();
@@ -1516,7 +1339,7 @@ impl TransferEngine for TokioTransferEngine {
                 chunk_size,
                 max_concurrent_parts,
             };
-            engine_ref.spawn_transfer_inner(*job_id, pause_rx, cancel_token).await;
+            engine_ref.spawn_transfer_inner(job_id_copy, pause_rx, cancel_token).await;
         });
 
         info!(job_id = %job_id, "Transfer retry enqueued");

@@ -5,12 +5,17 @@ use aws_config::timeout::TimeoutConfig;
 use aws_credential_types::Credentials;
 use aws_sdk_s3::config::{BehaviorVersion, Region};
 use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::types::{
+    BucketVersioningStatus, Grantee as AwsGrantee, Permission, Tag,
+};
 use aws_sdk_s3::Client as AwsClient;
 use chrono::{DateTime, Utc};
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
-use super::types::{BucketInfo, ObjectInfo, S3ClientConfig};
+use super::types::{
+    AclGrant, BucketInfo, Grantee, ObjectInfo, ObjectVersion, S3ClientConfig,
+};
 use crate::error::{Result, S3Error};
 
 /// S3Client trait — all S3 operations are async
@@ -53,7 +58,7 @@ pub trait S3Client: Send + Sync {
         dest_key: &str,
     ) -> Result<()>;
 
-    // --- Multipart (stub for Sprint 3) ---
+    // --- Multipart ---
 
     /// Initialize a multipart upload
     async fn create_multipart_upload(&self, bucket: &str, key: &str) -> Result<String>;
@@ -93,6 +98,59 @@ pub trait S3Client: Send + Sync {
 
     /// Get a byte range of an object (GET with Range header)
     async fn get_object_range(&self, bucket: &str, key: &str, range: &str) -> Result<Vec<u8>>;
+
+    // --- Versioning ---
+
+    /// Get the versioning status of a bucket
+    async fn get_bucket_versioning(&self, bucket: &str) -> Result<Option<String>>;
+
+    /// Enable or suspend versioning on a bucket
+    async fn set_bucket_versioning(&self, bucket: &str, status: &str) -> Result<()>;
+
+    /// List all versions of objects in a bucket/prefix
+    async fn list_object_versions(
+        &self,
+        bucket: &str,
+        prefix: &str,
+    ) -> Result<Vec<ObjectVersion>>;
+
+    /// Get a specific version of an object
+    async fn get_object_version(
+        &self,
+        bucket: &str,
+        key: &str,
+        version_id: &str,
+    ) -> Result<Vec<u8>>;
+
+    /// Delete a specific version of an object
+    async fn delete_object_version(
+        &self,
+        bucket: &str,
+        key: &str,
+        version_id: &str,
+    ) -> Result<()>;
+
+    /// Restore a specific version by copying it to the current version
+    async fn restore_object_version(
+        &self,
+        bucket: &str,
+        key: &str,
+        version_id: &str,
+    ) -> Result<()>;
+
+    // --- ACL ---
+
+    /// Get the ACL of a bucket
+    async fn get_bucket_acl(&self, bucket: &str) -> Result<Vec<AclGrant>>;
+
+    /// Set the ACL of a bucket
+    async fn set_bucket_acl(&self, bucket: &str, grants: &[AclGrant]) -> Result<()>;
+
+    /// Get the ACL of an object
+    async fn get_object_acl(&self, bucket: &str, key: &str) -> Result<Vec<AclGrant>>;
+
+    /// Set the ACL of an object
+    async fn set_object_acl(&self, bucket: &str, key: &str, grants: &[AclGrant]) -> Result<()>;
 }
 
 /// AWS SDK-based S3 client implementation
@@ -179,6 +237,8 @@ impl AwsSdkS3Client {
 
 #[async_trait]
 impl S3Client for AwsSdkS3Client {
+    // ── Bucket operations ──
+
     async fn list_buckets(&self) -> Result<Vec<BucketInfo>> {
         debug!("Listing buckets");
         let output = self
@@ -546,10 +606,296 @@ impl S3Client for AwsSdkS3Client {
     }
 }
 
+    // ── Versioning ──
+
+    async fn get_bucket_versioning(&self, bucket: &str) -> Result<Option<String>> {
+        debug!(bucket = %bucket, "Get bucket versioning");
+        match self.client.get_bucket_versioning().bucket(bucket).send().await {
+            Ok(output) => {
+                let status = output.status().map(|s| s.as_str().to_string());
+                info!(bucket = %bucket, status = ?status, "Bucket versioning status retrieved");
+                Ok(status)
+            }
+            Err(e) => {
+                let err = Self::map_sdk_error(&e.into());
+                // Some backends don't support versioning — return None instead of error
+                if matches!(err, S3Error::Aws(_)) && e.to_string().contains("NotImplemented") {
+                    warn!(bucket = %bucket, "Versioning not implemented by this backend");
+                    Ok(None)
+                } else {
+                    Err(err.into())
+                }
+            }
+        }
+    }
+
+    async fn set_bucket_versioning(&self, bucket: &str, status: &str) -> Result<()> {
+        debug!(bucket = %bucket, status = %status, "Set bucket versioning");
+        let versioning_status = match status {
+            "Enabled" => BucketVersioningStatus::Enabled,
+            "Suspended" => BucketVersioningStatus::Suspended,
+            _ => return Err(S3Error::Aws(format!("Invalid versioning status: {}", status)).into()),
+        };
+
+        self.client
+            .put_bucket_versioning()
+            .bucket(bucket)
+            .versioning_configuration(
+                aws_sdk_s3::types::VersioningConfiguration::builder()
+                    .status(versioning_status)
+                    .build(),
+            )
+            .send()
+            .await
+            .map_err(|e| Self::map_sdk_error(&e.into()))?;
+
+        info!(bucket = %bucket, status = %status, "Bucket versioning updated");
+        Ok(())
+    }
+
+    async fn list_object_versions(&self, bucket: &str, prefix: &str) -> Result<Vec<ObjectVersion>> {
+        debug!(bucket = %bucket, prefix = %prefix, "List object versions");
+
+        let mut versions = Vec::new();
+        let mut key_marker: Option<String> = None;
+        let mut version_id_marker: Option<String> = None;
+
+        loop {
+            let mut req = self
+                .client
+                .list_object_versions()
+                .bucket(bucket)
+                .prefix(prefix)
+                .max_keys(200);
+
+            if let Some(ref km) = key_marker {
+                req = req.key_marker(km);
+            }
+            if let Some(ref vm) = version_id_marker {
+                req = req.version_id_marker(vm);
+            }
+
+            let output = req.send().await.map_err(|e| Self::map_sdk_error(&e.into()))?;
+
+            for v in output.versions() {
+                if let Some(key) = v.key() {
+                    let last_modified = v.last_modified()
+                        .map(|d| aws_datetime_to_chrono(d))
+                        .unwrap_or_else(|| Utc::now());
+
+                    versions.push(ObjectVersion {
+                        key: key.to_string(),
+                        version_id: v.version_id().unwrap_or("null").to_string(),
+                        is_latest: v.is_latest().unwrap_or(false),
+                        size: v.size().unwrap_or(0),
+                        last_modified,
+                        e_tag: v.e_tag().map(|s| s.to_string()),
+                        storage_class: v.storage_class().map(|s| s.as_str().to_string()),
+                    });
+                }
+            }
+
+            if !output.is_truncated() {
+                break;
+            }
+            key_marker = output.next_key_marker().map(|s| s.to_string());
+            version_id_marker = output.next_version_id_marker().map(|s| s.to_string());
+        }
+
+        info!(
+            bucket = %bucket,
+            prefix = %prefix,
+            count = versions.len(),
+            "Object versions listed"
+        );
+        Ok(versions)
+    }
+
+    async fn get_object_version(
+        &self,
+        bucket: &str,
+        key: &str,
+        version_id: &str,
+    ) -> Result<Vec<u8>> {
+        debug!(bucket = %bucket, key = %key, version_id = %version_id, "Get object version");
+        let output = self
+            .client
+            .get_object()
+            .bucket(bucket)
+            .key(key)
+            .version_id(version_id)
+            .send()
+            .await
+            .map_err(|e| Self::map_sdk_error(&e.into()))?;
+
+        let data = output
+            .body
+            .collect()
+            .await
+            .map_err(|e| S3Error::Aws(format!("Failed to read body: {}", e)))?;
+        Ok(data.to_vec())
+    }
+
+    async fn delete_object_version(
+        &self,
+        bucket: &str,
+        key: &str,
+        version_id: &str,
+    ) -> Result<()> {
+        debug!(bucket = %bucket, key = %key, version_id = %version_id, "Delete object version");
+        self.client
+            .delete_object()
+            .bucket(bucket)
+            .key(key)
+            .version_id(version_id)
+            .send()
+            .await
+            .map_err(|e| Self::map_sdk_error(&e.into()))?;
+        info!(bucket = %bucket, key = %key, version_id = %version_id, "Object version deleted");
+        Ok(())
+    }
+
+    async fn restore_object_version(
+        &self,
+        bucket: &str,
+        key: &str,
+        version_id: &str,
+    ) -> Result<()> {
+        debug!(bucket = %bucket, key = %key, version_id = %version_id, "Restore object version");
+        // Copy the specific version back to the current key (overwrites current version)
+        let copy_source = format!("{}/{}?versionId={}", bucket, key, version_id);
+        self.client
+            .copy_object()
+            .copy_source(&copy_source)
+            .bucket(bucket)
+            .key(key)
+            .send()
+            .await
+            .map_err(|e| Self::map_sdk_error(&e.into()))?;
+        info!(bucket = %bucket, key = %key, version_id = %version_id, "Object version restored");
+        Ok(())
+    }
+
+    // ── ACL ──
+
+    async fn get_bucket_acl(&self, bucket: &str) -> Result<Vec<AclGrant>> {
+        debug!(bucket = %bucket, "Get bucket ACL");
+        let output = self
+            .client
+            .get_bucket_acl()
+            .bucket(bucket)
+            .send()
+            .await
+            .map_err(|e| Self::map_sdk_error(&e.into()))?;
+
+        let grants = parse_acl_grants(output.grants());
+        info!(bucket = %bucket, count = grants.len(), "Bucket ACL retrieved");
+        Ok(grants)
+    }
+
+    async fn set_bucket_acl(&self, bucket: &str, grants: &[AclGrant]) -> Result<()> {
+        debug!(bucket = %bucket, count = grants.len(), "Set bucket ACL");
+        let aws_grants: Vec<aws_sdk_s3::types::Grant> = grants.iter().map(|g| grant_to_aws(g)).collect();
+
+        self.client
+            .put_bucket_acl()
+            .bucket(bucket)
+            .set_access_control_policy(Some(
+                aws_sdk_s3::types::AccessControlPolicy::builder()
+                    .set_grants(Some(aws_grants))
+                    .build(),
+            ))
+            .send()
+            .await
+            .map_err(|e| Self::map_sdk_error(&e.into()))?;
+
+        info!(bucket = %bucket, count = grants.len(), "Bucket ACL updated");
+        Ok(())
+    }
+
+    async fn get_object_acl(&self, bucket: &str, key: &str) -> Result<Vec<AclGrant>> {
+        debug!(bucket = %bucket, key = %key, "Get object ACL");
+        let output = self
+            .client
+            .get_object_acl()
+            .bucket(bucket)
+            .key(key)
+            .send()
+            .await
+            .map_err(|e| Self::map_sdk_error(&e.into()))?;
+
+        let grants = parse_acl_grants(output.grants());
+        info!(bucket = %bucket, key = %key, count = grants.len(), "Object ACL retrieved");
+        Ok(grants)
+    }
+
+    async fn set_object_acl(&self, bucket: &str, key: &str, grants: &[AclGrant]) -> Result<()> {
+        debug!(bucket = %bucket, key = %key, count = grants.len(), "Set object ACL");
+        let aws_grants: Vec<aws_sdk_s3::types::Grant> = grants.iter().map(|g| grant_to_aws(g)).collect();
+
+        self.client
+            .put_object_acl()
+            .bucket(bucket)
+            .key(key)
+            .set_access_control_policy(Some(
+                aws_sdk_s3::types::AccessControlPolicy::builder()
+                    .set_grants(Some(aws_grants))
+                    .build(),
+            ))
+            .send()
+            .await
+            .map_err(|e| Self::map_sdk_error(&e.into()))?;
+
+        info!(bucket = %bucket, key = %key, count = grants.len(), "Object ACL updated");
+        Ok(())
+    }
+}
+
 /// Convert AWS SDK timestamp to chrono DateTime<Utc>
 fn aws_datetime_to_chrono(dt: &aws_sdk_s3::primitives::DateTime) -> DateTime<Utc> {
     let nanos = dt.as_nanos();
     let secs = nanos / 1_000_000_000;
     let nsecs = (nanos % 1_000_000_000) as u32;
     DateTime::from_timestamp(secs as i64, nsecs).unwrap_or_else(|| Utc::now())
+}
+
+/// Parse AWS SDK grants into our AclGrant type
+fn parse_acl_grants(aws_grants: &[aws_sdk_s3::types::Grant]) -> Vec<AclGrant> {
+    aws_grants
+        .iter()
+        .filter_map(|g| {
+            let grantee = g.grantee()?;
+            let permission = g.permission()?.as_str().to_string();
+            Some(AclGrant {
+                grantee: Grantee {
+                    id: grantee.id().map(|s| s.to_string()),
+                    display_name: grantee.display_name().map(|s| s.to_string()),
+                    uri: grantee.uri().map(|s| s.to_string()),
+                    grantee_type: grantee.r#type().as_str().to_string(),
+                },
+                permission,
+            })
+        })
+        .collect()
+}
+
+/// Convert our AclGrant to AWS SDK Grant
+fn grant_to_aws(grant: &AclGrant) -> aws_sdk_s3::types::Grant {
+    let mut grantee_builder = AwsGrantee::builder()
+        .r#type(aws_sdk_s3::types::Type::from(grant.grantee.grantee_type.as_str()));
+
+    if let Some(ref id) = grant.grantee.id {
+        grantee_builder = grantee_builder.id(id);
+    }
+    if let Some(ref name) = grant.grantee.display_name {
+        grantee_builder = grantee_builder.display_name(name);
+    }
+    if let Some(ref uri) = grant.grantee.uri {
+        grantee_builder = grantee_builder.uri(uri);
+    }
+
+    aws_sdk_s3::types::Grant::builder()
+        .grantee(grantee_builder.build())
+        .permission(Permission::from(grant.permission.as_str()))
+        .build()
 }

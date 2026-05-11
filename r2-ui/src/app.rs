@@ -1,6 +1,7 @@
 //! r2-ui — Main application logic
 //!
-//! GTK4 Application with dual-pane browser, profile manager, and menu bar.
+//! GTK4 Application with dual-pane browser, profile manager,
+//! transfer queue, and drag & drop support.
 
 use gtk4::prelude::*;
 use gtk4::{
@@ -13,15 +14,18 @@ use tracing::{error, info};
 use r2_core::cache::manager::{CacheManager, SqliteCacheManager};
 use r2_core::credentials::storage::{CredentialStorage, LibsecretCredentialStorage};
 use r2_core::events::PaneId;
+use r2_core::transfer::{TransferEngine, TokioTransferEngine};
 
 use crate::pane::S3Pane;
 use crate::profile_manager::ProfileManagerDialog;
+use crate::transfer_queue::TransferQueueWidget;
 
 /// Main r2 application
 pub struct R2App {
     app: Application,
     storage: Arc<dyn CredentialStorage>,
     cache: Arc<dyn CacheManager>,
+    engine: Option<Arc<dyn TransferEngine>>,
     main_window: Option<ApplicationWindow>,
 }
 
@@ -64,6 +68,7 @@ impl R2App {
             app,
             storage,
             cache,
+            engine: None,
             main_window: None,
         }
     }
@@ -121,8 +126,9 @@ impl R2App {
             // Set initial position (50:50)
             paned.set_position(600);
 
-            // ── Transfer Queue Panel (collapsed placeholder) ──
-            let transfer_queue_box = create_transfer_queue_panel();
+            // ── Transfer Queue Panel ──
+            let transfer_queue = std::sync::Mutex::new(TransferQueueWidget::new());
+            let transfer_queue_box = transfer_queue.lock().expect("Lock transfer queue").container.clone();
 
             // ── Status Bar ──
             let status_bar = create_status_bar();
@@ -174,6 +180,10 @@ fn create_menu_bar(app: &Application, storage: &Arc<dyn CredentialStorage>) -> G
     // View menu
     let view_menu = create_view_menu(app);
     menu_bar.append(&view_menu);
+
+    // Transfer menu
+    let transfer_menu = create_transfer_menu(app);
+    menu_bar.append(&transfer_menu);
 
     // Help menu
     let help_menu = create_help_menu(app);
@@ -257,6 +267,46 @@ fn create_view_menu(app: &Application) -> MenuButton {
     menu_button
 }
 
+/// Create the Transfer menu
+fn create_transfer_menu(app: &Application) -> MenuButton {
+    let menu_button = MenuButton::builder()
+        .label("Transfer")
+        .primary(true)
+        .build();
+
+    let popover = PopoverMenu::from_model(None::<&gio::Menu>);
+    let menu_model = gio::Menu::new();
+
+    // Resume all paused
+    let resume_action = gio::SimpleAction::new("resume-all", None);
+    resume_action.connect_activate(move |_, _| {
+        info!("Resume all paused transfers");
+    });
+    app.add_action(&resume_action);
+    menu_model.append(Some("▶ Alle pausierten fortsetzen"), Some("app.resume-all"));
+
+    // Retry all failed
+    let retry_action = gio::SimpleAction::new("retry-all", None);
+    retry_action.connect_activate(move |_, _| {
+        info!("Retry all failed transfers");
+    });
+    app.add_action(&retry_action);
+    menu_model.append(Some("↻ Alle fehlgeschlagenen wiederholen"), Some("app.retry-all"));
+
+    // Clear completed
+    let clear_action = gio::SimpleAction::new("clear-completed", None);
+    clear_action.connect_activate(move |_, _| {
+        info!("Clear completed transfers");
+    });
+    app.add_action(&clear_action);
+    menu_model.append(Some("✕ Alle abgeschlossenen löschen"), Some("app.clear-completed"));
+
+    popover.set_menu_model(Some(&menu_model));
+    menu_button.set_popover(Some(&popover));
+
+    menu_button
+}
+
 /// Create the Help menu
 fn create_help_menu(app: &Application) -> MenuButton {
     let menu_button = MenuButton::builder()
@@ -319,75 +369,14 @@ fn create_global_toolbar() -> GtkBox {
     menu_model.append(Some("📁 Neuen Ordner erstellen"), Some("app.new-folder"));
     menu_model.append(Some("Trennlinie"), None);
     menu_model.append(Some("🔲 Transfer-Queue anzeigen"), Some("app.toggle-queue"));
+    menu_model.append(Some("Trennlinie"), None);
+    menu_model.append(Some("🔄 Sync All (Cache aktualisieren)"), Some("app.sync-all"));
 
     popover.set_menu_model(Some(&menu_model));
     actions_btn.set_popover(Some(&popover));
     toolbar.append(&actions_btn);
 
     toolbar
-}
-
-/// Create the transfer queue panel (collapsed by default)
-fn create_transfer_queue_panel() -> GtkBox {
-    let panel = GtkBox::builder()
-        .orientation(Orientation::Vertical)
-        .spacing(4)
-        .margin_start(8)
-        .margin_end(8)
-        .margin_top(4)
-        .margin_bottom(4)
-        .css_classes(["transfer-queue"])
-        .build();
-
-    let header = GtkBox::builder()
-        .orientation(Orientation::Horizontal)
-        .spacing(8)
-        .build();
-
-    let toggle_btn = ToggleButton::builder()
-        .label("🔲 Transfer-Queue ▸")
-        .build();
-
-    let queue_info = Label::builder()
-        .label("0 aktiv")
-        .halign(gtk4::Align::Start)
-        .hexpand(true)
-        .build();
-
-    header.append(&toggle_btn);
-    header.append(&queue_info);
-    panel.append(&header);
-
-    // Queue content (hidden by default, will be expanded in Sprint 3)
-    let queue_content = GtkBox::builder()
-        .orientation(Orientation::Vertical)
-        .spacing(4)
-        .margin_start(16)
-        .build();
-
-    let empty_label = Label::builder()
-        .label("Keine aktiven Transfers. Ziehe Dateien zwischen Panes, um einen Transfer zu starten.")
-        .halign(gtk4::Align::Start)
-        .build();
-    queue_content.append(&empty_label);
-
-    // Initially hidden
-    queue_content.set_visible(false);
-
-    let queue_content_clone = queue_content.clone();
-    toggle_btn.connect_toggled(move |btn| {
-        let visible = btn.is_active();
-        queue_content_clone.set_visible(visible);
-        if visible {
-            btn.set_label("🔲 Transfer-Queue ▾");
-        } else {
-            btn.set_label("🔲 Transfer-Queue ▸");
-        }
-    });
-
-    panel.append(&queue_content);
-
-    panel
 }
 
 /// Create the status bar
@@ -408,6 +397,13 @@ fn create_status_bar() -> GtkBox {
         .hexpand(true)
         .build();
     status_bar.append(&status_label);
+
+    // Online/Offline indicator
+    let online_label = Label::builder()
+        .label("🟢 Online")
+        .halign(gtk4::Align::End)
+        .build();
+    status_bar.append(&online_label);
 
     status_bar
 }

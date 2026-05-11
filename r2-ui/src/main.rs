@@ -8,6 +8,7 @@ mod app;
 mod dialogs;
 mod pane;
 mod profile_manager;
+mod transfer_queue;
 mod widgets;
 
 fn main() {

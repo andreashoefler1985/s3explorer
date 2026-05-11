@@ -16,8 +16,12 @@ fi
 
 # Build .deb package
 echo "Building .deb package..."
-cargo deb --package r2-ui
+cargo deb -p r2-ui -- --manifest-path r2-ui/Cargo.toml
+
+# Copy .deb to dist/
+mkdir -p dist
+cp target/debian/*.deb ./dist/ 2>/dev/null || echo "No .deb found in target/debian/"
 
 echo "=== Build complete ==="
 echo "Binary: target/release/r2"
-echo "Debian package: target/debian/*.deb"
+echo "Debian package: dist/*.deb"
