@@ -1,98 +1,219 @@
-<div align="center" id="top"> 
-  <img src="./.github/app.gif" alt="R2" />
+<div align="center">
+  <br/>
+  <h1>🪣 r2 — S3 Explorer</h1>
+  <p><strong>Ein nativer GTK4-S3-Browser für Linux — geschrieben in Rust.</strong></p>
 
-  &#xa0;
+  <p>
+    <img src="https://img.shields.io/badge/Rust-1.85%2B-dea584?logo=rust" alt="Rust"/>
+    <img src="https://img.shields.io/badge/GTK-4.12-7f5f9c?logo=gtk" alt="GTK4"/>
+    <img src="https://img.shields.io/github/license/andreashoefler1985/r2" alt="License"/>
+    <img src="https://img.shields.io/badge/status-alpha-yellow" alt="Status"/>
+  </p>
 
-  <!-- <a href="https://r2.netlify.app">Demo</a> -->
+  <br/>
 </div>
 
-<h1 align="center">R2</h1>
+---
 
-<p align="center">
-  <img alt="Github top language" src="https://img.shields.io/github/languages/top/andreashoefler1985/r2?color=56BEB8">
+**r2** ist ein nativer S3-Client für Linux mit einer GTK4-Oberfläche. Er bietet eine **Zwei-Pane-Ansicht** (inspiriert von Midnight Commander / Far Manager) zum gleichzeitigen Durchsuchen und Verwalten von zwei S3-Buckets oder -Ordnern. Der Fokus liegt auf Geschwindigkeit, Sicherheit und einer nahtlosen Desktop-Integration.
 
-  <img alt="Github language count" src="https://img.shields.io/github/languages/count/andreashoefler1985/r2?color=56BEB8">
+> ⚠️ **Alpha-Phase** – Die Kernfunktionen sind implementiert, die UI wird kontinuierlich weiterentwickelt.
 
-  <img alt="Repository size" src="https://img.shields.io/github/repo-size/andreashoefler1985/r2?color=56BEB8">
+---
 
-  <img alt="License" src="https://img.shields.io/github/license/andreashoefler1985/r2?color=56BEB8">
+## ✨ Features
 
-  <!-- <img alt="Github issues" src="https://img.shields.io/github/issues/andreashoefler1985/r2?color=56BEB8" /> -->
+### 🔍 Dual-Pane-Browser
+Zwei unabhängige Panels nebeneinander – jedes mit eigenem Profil, Bucket und Prefix. Perfekt zum Vergleichen, Verschieben oder Kopieren zwischen Buckets.
 
-  <!-- <img alt="Github forks" src="https://img.shields.io/github/forks/andreashoefler1985/r2?color=56BEB8" /> -->
+### 🔐 Sicheres Credential-Management
+- Speicherung über **libsecret** (GNOME Keyring / KDE Wallet)
+- **Verschlüsselter Datei-Fallback** (AES-256-GCM) für Systeme ohne Keyring
+- Unterstützung für mehrere Profile mit verschiedenen Endpunkten und Regionen
 
-  <!-- <img alt="Github stars" src="https://img.shields.io/github/stars/andreashoefler1985/r2?color=56BEB8" /> -->
-</p>
+### ⚡ Leistungsstarker Transfer-Engine
+- **Multipart-Upload/-Download** für große Dateien (ab 100 MB)
+- **Pause/Resume/Cancel** für laufende Transfers
+- **Automatische Wiederholungsversuche** bei Fehlern (konfigurierbar)
+- **Concurrency-Limit** für parallele Transfers
+- **S3↔S3-Kopien** (serverseitig oder via Download/Upload bei verschiedenen Endpunkten)
+- **Echtzeit-Fortschritt** mit Geschwindigkeits- und ETA-Anzeige
 
-<!-- Status -->
+### 🗂️ Metadaten-Cache
+- **SQLite-basierter Cache** für Bucket-Listen und Object-Listings
+- Konfigurierbare TTL – reduziert API-Aufrufe und beschleunigt die Navigation
+- Automatische Cache-Aktualisierung bei Änderungen
 
-<!-- <h4 align="center"> 
-	🚧  R2 🚀 Under construction...  🚧
-</h4> 
+### 🖥️ Native GTK4-Oberfläche
+- **Zwei-Pane-Ansicht** mit synchronisierter Navigation
+- **Drag & Drop** zwischen Panels und vom Dateimanager
+- **Kontextmenüs** für Dateioperationen (Download, Löschen, Umbenennen, Eigenschaften)
+- **Transfer-Queue** mit Fortschrittsbalken und Statusanzeige
+- **Profile-Manager** zum Hinzufügen/Bearbeiten von S3-Endpunkten
+- **Tastaturkürzel** für effiziente Bedienung
 
-<hr> -->
+---
 
-<p align="center">
-  <a href="#dart-about">About</a> &#xa0; | &#xa0; 
-  <a href="#sparkles-features">Features</a> &#xa0; | &#xa0;
-  <a href="#rocket-technologies">Technologies</a> &#xa0; | &#xa0;
-  <a href="#white_check_mark-requirements">Requirements</a> &#xa0; | &#xa0;
-  <a href="#checkered_flag-starting">Starting</a> &#xa0; | &#xa0;
-  <a href="#memo-license">License</a> &#xa0; | &#xa0;
-  <a href="https://github.com/andreashoefler1985" target="_blank">Author</a>
-</p>
+## 🚀 Installation
 
-<br>
+### Voraussetzungen
+- **Linux** mit GTK4 (≥ 4.12) und einem D-Bus Session Bus
+- **Rust** 1.85+ und Cargo
 
-## :dart: About ##
-
-Describe your project
-
-## :sparkles: Features ##
-
-:heavy_check_mark: Feature 1;\
-:heavy_check_mark: Feature 2;\
-:heavy_check_mark: Feature 3;
-
-## :rocket: Technologies ##
-
-The following tools were used in this project:
-
-- [Expo](https://expo.io/)
-- [Node.js](https://nodejs.org/en/)
-- [React](https://pt-br.reactjs.org/)
-- [React Native](https://reactnative.dev/)
-- [TypeScript](https://www.typescriptlang.org/)
-
-## :white_check_mark: Requirements ##
-
-Before starting :checkered_flag:, you need to have [Git](https://git-scm.com) and [Node](https://nodejs.org/en/) installed.
-
-## :checkered_flag: Starting ##
+### Aus dem Quellcode bauen
 
 ```bash
-# Clone this project
-$ git clone https://github.com/andreashoefler1985/r2
+# Repository klonen
+git clone https://github.com/andreashoefler1985/r2.git
+cd r2
 
-# Access
-$ cd r2
+# Abhängigkeiten installieren (Ubuntu/Debian)
+sudo apt install libgtk-4-dev libdbus-1-dev pkg-config
 
-# Install dependencies
-$ yarn
+# Bauen
+cargo build --release
 
-# Run the project
-$ yarn start
-
-# The server will initialize in the <http://localhost:3000>
+# Ausführen
+./target/release/r2
 ```
 
-## :memo: License ##
+### Als Debian-Paket bauen
 
-This project is under license from MIT. For more details, see the [LICENSE](LICENSE.md) file.
+```bash
+./scripts/build-deb.sh
+sudo dpkg -i target/debian/r2_*.deb
+```
 
+---
 
-Made with :heart: by <a href="https://github.com/andreashoefler1985" target="_blank">Andreas Höfler</a>
+## 🎮 Verwendung
 
-&#xa0;
+### Profile einrichten
+1. Starte r2
+2. Öffne den Profile-Manager (`Strg+P`)
+3. Füge einen neuen S3-Endpunkt hinzu:
+   - **Name**: Ein beliebiger Anzeigename
+   - **Endpoint**: z. B. `https://s3.eu-central-1.amazonaws.com` (oder S3-kompatibel wie MinIO, Backblaze B2, Cloudflare R2)
+   - **Region**: z. B. `eu-central-1`
+   - **Access Key ID** und **Secret Access Key**
 
-<a href="#top">Back to top</a>
+### Navigation
+- **Panel wechseln**: `Tab`
+- **Bucket auswählen**: Dropdown oben im Panel
+- **Ordner öffnen**: Doppelklick oder `Enter`
+- **Zurück**: `Alt+Links` oder Breadcrumb-Klick
+- **Aktuellen Pfad kopieren**: `Strg+C`
+
+### Dateioperationen
+- **Download**: Rechtsklick → "Herunterladen" oder Drag & Drop auf lokalen Ordner
+- **Upload**: Datei aus dem Dateimanager in ein Panel ziehen
+- **Zwischen Panels kopieren**: Objekt von Panel A nach Panel B ziehen
+- **Löschen**: `Entf` oder Rechtsklick → "Löschen"
+- **Umbenennen**: `F2` oder Rechtsklick → "Umbenennen"
+- **Eigenschaften**: `Strg+I` oder Rechtsklick → "Eigenschaften"
+
+### Transfers verwalten
+- **Transfer-Queue anzeigen**: `Strg+T`
+- **Transfer pausieren**: Klick auf Pause-Button
+- **Transfer fortsetzen**: Klick auf Resume-Button
+- **Transfer abbrechen**: Klick auf Cancel-Button
+
+---
+
+## 🏗️ Architektur
+
+```
+r2/
+├── r2-core/          # Kernbibliothek (Business-Logik)
+│   ├── src/
+│   │   ├── s3_client/     # S3-Client-Trait + AWS SDK-Implementierung
+│   │   ├── credentials/   # Credential-Storage (libsecret + verschlüsselte Datei)
+│   │   ├── cache/         # Metadaten-Cache (SQLite)
+│   │   ├── transfer/      # Transfer-Engine (Tokio-basiert, Multipart)
+│   │   ├── events.rs      # Event-Typen für UI-Kommunikation
+│   │   └── error.rs       # Einheitliches Error-Handling
+│   └── tests/
+│
+├── r2-ui/            # GTK4-Oberfläche
+│   ├── src/
+│   │   ├── app.rs          # Haupt-App (Fenster, Layout)
+│   │   ├── pane.rs         # Einzelnes Browser-Panel
+│   │   ├── profile_manager.rs  # Profile-Manager-Dialog
+│   │   ├── widgets.rs      # Custom GTK4-Widgets
+│   │   └── dialogs/        # Dialoge (Bestätigung, Umbenennen, Eigenschaften)
+│   └── ...
+│
+├── scripts/          # Build- und Deployment-Skripte
+├── resources/        # Desktop-Integration (.desktop-Datei)
+└── adr/              # Architecture Decision Records
+```
+
+### Technologie-Stack
+
+| Komponente | Technologie |
+|---|---|
+| **Sprache** | Rust (Edition 2021) |
+| **UI** | GTK4 (via `gtk4-rs`) |
+| **Async Runtime** | Tokio (Multi-Threaded) |
+| **S3-API** | AWS SDK for Rust (`aws-sdk-s3`) |
+| **Credential Storage** | libsecret (D-Bus) + AES-256-GCM File Fallback |
+| **Cache** | SQLite (via `rusqlite`) |
+| **Transfer** | Eigenes Tokio-basiertes Multipart-Engine |
+| **Build** | Cargo Workspace |
+
+---
+
+## 🧪 Tests
+
+```bash
+# Unit-Tests
+cargo test -p r2-core
+
+# Integrationstests
+cargo test -p r2-core --test integration_test
+
+# Alle Tests
+cargo test
+```
+
+---
+
+## 🗺️ Roadmap
+
+- [x] Dual-Pane-Architektur
+- [x] S3-Client mit AWS SDK
+- [x] Credential-Storage (libsecret + verschlüsselter Fallback)
+- [x] Metadaten-Cache (SQLite)
+- [x] Transfer-Engine (Multipart, Pause/Resume, Retry)
+- [x] GTK4-Basisschnittstelle
+- [ ] **Transfer-Queue-UI** (Fortschrittsbalken, Warteschlange)
+- [ ] **Suchfunktion** über Buckets/Objekte
+- [ ] **Lesezeichen** für häufig verwendete Pfade
+- [ ] **Batch-Operationen** (mehrere Dateien gleichzeitig)
+- [ ] **Verschlüsselung** clientseitig (vor Upload)
+- [ ] **Debian/AppImage-Paketierung** (automatisiert)
+- [ ] **Flatpak**-Veröffentlichung
+
+---
+
+## 🤝 Beitragen
+
+Beiträge sind willkommen! Bitte beachte:
+
+1. **Issues** – Für Feature-Wünsche oder Bug-Reports
+2. **Pull Requests** – Für Code-Änderungen
+3. **ADR** – Architecture Decision Records dokumentieren wichtige Entscheidungen
+
+---
+
+## 📄 Lizenz
+
+MIT © [Andreas Höfler](https://github.com/andreashoefler1985)
+
+---
+
+<div align="center">
+  <sub>Mit ❤️ in Rust gebaut.</sub>
+  <br/>
+  <a href="#top">⬆ Nach oben</a>
+</div>
