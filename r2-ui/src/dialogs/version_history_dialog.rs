@@ -104,7 +104,7 @@ pub fn show_version_history(
     let store_l = store.clone();
     let loading_l = loading_label.clone();
     let versions_cell_l = versions_cell.clone();
-    let selected_l = selected.clone();
+    let _selected_l = selected.clone();
 
     glib::MainContext::default().spawn_local(async move {
         match client.list_object_versions(&bucket_l, &key_l).await {

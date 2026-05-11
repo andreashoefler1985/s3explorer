@@ -16,7 +16,7 @@ fi
 
 # Build .deb package
 echo "Building .deb package..."
-cargo deb -p r2-ui -- --manifest-path r2-ui/Cargo.toml
+cargo deb -p r2-ui
 
 # Copy .deb to dist/
 mkdir -p dist
