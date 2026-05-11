@@ -1,0 +1,33 @@
+[package]
+name = "r2-ui"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "r2"
+path = "src/main.rs"
+
+[dependencies]
+# Core
+r2-core = { path = "../r2-core" }
+
+# Async Runtime
+tokio.workspace = true
+futures.workspace = true
+
+# UI
+gtk4.workspace = true
+gio.workspace = true
+glib.workspace = true
+
+# Logging
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# UUID
+uuid.workspace = true
+
+# Date/Time
+chrono.workspace = true

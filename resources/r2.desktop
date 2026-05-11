@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=r2
+Comment=S3-kompatibler Object-Storage-Browser
+Exec=r2
+Icon=r2
+Categories=Network;FileTransfer;Utility;
+Terminal=false
+StartupNotify=true

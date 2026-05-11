@@ -1,0 +1,24 @@
+# Rust / Cargo
+target/
+Cargo.lock
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Build-Artefakte (Debian Package)
+*.deb
+*.AppImage
+*.rpm
+
+# Temporäre Dateien
+*.tmp
+*.bak
+*.log
+
+# OS-spezifisch
+.DS_Store
+Thumbs.db
