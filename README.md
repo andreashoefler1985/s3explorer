@@ -15,7 +15,7 @@
 
 ---
 
-**r2** ist ein nativer S3-Client für Linux mit einer GTK4-Oberfläche. Er bietet eine **Zwei-Pane-Ansicht** (inspiriert von Midnight Commander / Far Manager) zum gleichzeitigen Durchsuchen und Verwalten von zwei S3-Buckets oder -Ordnern. Der Fokus liegt auf Geschwindigkeit, Sicherheit und einer nahtlosen Desktop-Integration.
+**S3-Explorer** ist ein nativer S3-Client für Linux mit einer GTK4-Oberfläche. Er bietet eine **Zwei-Pane-Ansicht** (inspiriert von Midnight Commander / Far Manager) zum gleichzeitigen Durchsuchen und Verwalten von zwei S3-Buckets oder -Ordnern. Der Fokus liegt auf Geschwindigkeit, Sicherheit und einer nahtlosen Desktop-Integration.
 
 > ⚠️ **Alpha-Phase** – Die Kernfunktionen sind implementiert, die UI wird kontinuierlich weiterentwickelt.
 
